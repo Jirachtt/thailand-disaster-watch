@@ -117,43 +117,51 @@
             </template>
           </template>
 
-          <!-- Fire Spread Direction Arrows (CA+Wind model) -->
+          <!-- Fire Spread Timeline Path (dotted lines showing spread over time) -->
           <template v-if="showPredictions">
             <template v-for="pred in spreadPredictions" :key="'spread-' + pred.fireId">
-              <!-- Main wind direction arrow -->
-              <LPolyline
-                v-if="pred.spreadArrow"
-                :lat-lngs="[[pred.center.lat, pred.center.lng], [pred.spreadArrow.lat, pred.spreadArrow.lng]]"
-                :options="{ color: '#ff4500', weight: 4, opacity: 0.9, dashArray: '8, 6' }"
-              />
-              <!-- Arrow tip marker -->
-              <LMarker
-                v-if="pred.spreadArrow"
-                :lat-lng="[pred.spreadArrow.lat, pred.spreadArrow.lng]"
-              >
-                <LIcon :icon-size="[40, 20]" :icon-anchor="[20, 10]" class-name="station-icon-transparent">
-                  <div class="fire-direction-arrow">
-                    🔥→ {{ pred.windDirection }}
-                  </div>
-                </LIcon>
-                <LPopup :options="{ className: 'dark-popup' }">
-                  <div class="popup-content">
-                    <div class="popup-name" style="color: #ff4500">🔥 ทิศทางลามไฟ</div>
-                    <div class="popup-stat">
-                      <span class="popup-stat-label">ทิศทาง</span>
-                      <span class="popup-stat-value" style="color: #ff4500">{{ pred.windDirection }} ({{ pred.windDeg }}°)</span>
+              <!-- Timeline path segments: fire center → 1h → 3h → 6h → 12h -->
+              <template v-if="pred.timelinePath && pred.timelinePath.length">
+                <LPolyline
+                  v-for="(seg, si) in getFireTimelineSegments(pred)"
+                  :key="'fire-path-' + pred.fireId + '-' + si"
+                  :lat-lngs="seg.latlngs"
+                  :options="seg.options"
+                />
+                <!-- Time + distance badges at each timeline point -->
+                <LMarker
+                  v-for="(point, pi) in pred.timelinePath"
+                  :key="'fire-tp-' + pred.fireId + '-' + pi"
+                  :lat-lng="[point.lat, point.lng]"
+                >
+                  <LIcon :icon-size="[56, 24]" :icon-anchor="[28, 12]" class-name="station-icon-transparent">
+                    <div class="fire-timeline-badge" :class="'hour-' + point.hours">
+                      +{{ point.hours }}ชม. · {{ point.distanceKm }}km
                     </div>
-                    <div class="popup-stat">
-                      <span class="popup-stat-label">ลม</span>
-                      <span class="popup-stat-value">{{ pred.windSpeed?.toFixed(1) }} m/s</span>
+                  </LIcon>
+                  <LPopup :options="{ className: 'dark-popup' }">
+                    <div class="popup-content">
+                      <div class="popup-name" style="color: #ff4500">🔥 คาดการณ์ลุกลาม +{{ point.hours }} ชม.</div>
+                      <div class="popup-stat">
+                        <span class="popup-stat-label">ทิศทาง</span>
+                        <span class="popup-stat-value" style="color: #ff4500">{{ pred.windDirection }} ({{ pred.windDeg }}°)</span>
+                      </div>
+                      <div class="popup-stat">
+                        <span class="popup-stat-label">ระยะจากจุดไฟ</span>
+                        <span class="popup-stat-value">{{ point.distanceKm }} km</span>
+                      </div>
+                      <div class="popup-stat">
+                        <span class="popup-stat-label">พื้นที่คาดการณ์</span>
+                        <span class="popup-stat-value" style="color: #dc2626">{{ point.estimatedAreaSqKm }} ตร.กม.</span>
+                      </div>
+                      <div class="popup-stat">
+                        <span class="popup-stat-label">ลม</span>
+                        <span class="popup-stat-value">{{ pred.windSpeed?.toFixed(1) }} m/s</span>
+                      </div>
                     </div>
-                    <div class="popup-stat">
-                      <span class="popup-stat-label">ระยะลุกลามสูงสุด</span>
-                      <span class="popup-stat-value" style="color: #dc2626">{{ pred.maxSpreadKm }} km</span>
-                    </div>
-                  </div>
-                </LPopup>
-              </LMarker>
+                  </LPopup>
+                </LMarker>
+              </template>
               <!-- Spread probability cells (8-direction grid) -->
               <LCircle
                 v-for="(cell, ci) in (pred.spreadCells || []).filter(c => c.probability >= 0.3)"
@@ -343,11 +351,11 @@
             </LMarker>
           </template>
 
-          <!-- Rain Direction Prediction (separate toggle) -->
+          <!-- Rain Direction Prediction (dotted timeline paths) -->
           <template v-if="showRainDirection">
             <template v-for="(rain, idx) in rainStations" :key="'rain-dir-' + idx">
               <template v-if="rain.predictedPath && rain.predictedPath.length">
-                <!-- Path line segments: current → 1h (bright), 1h → 2h (medium), 2h → 3h (faded) -->
+                <!-- Path line segments with dotted lines -->
                 <LPolyline
                   v-for="(seg, si) in getRainPathSegments(rain)"
                   :key="'rain-seg-' + idx + '-' + si"
@@ -355,19 +363,19 @@
                   :options="seg.options"
                 />
 
-                <!-- Time markers at each predicted position (1h, 2h, 3h) -->
+                <!-- Time + distance markers at each predicted position -->
                 <LMarker
                   v-for="(point, pi) in rain.predictedPath"
                   :key="'rain-pt-' + idx + '-' + pi"
                   :lat-lng="[point.lat, point.lng]"
                 >
                   <LIcon
-                    :icon-size="[36, 20]"
-                    :icon-anchor="[18, 10]"
+                    :icon-size="[56, 24]"
+                    :icon-anchor="[28, 12]"
                     class-name="rain-icon-transparent"
                   >
-                    <div class="rain-time-badge" :class="'hour-' + (pi + 1)">
-                      {{ pi + 1 }} ชม.
+                    <div class="rain-time-badge" :class="'hour-' + (point.hours || pi + 1)">
+                      +{{ point.hours || pi + 1 }}ชม. · {{ point.distanceKm ? point.distanceKm + 'km' : '' }}
                     </div>
                   </LIcon>
                   <LPopup :options="{ closeButton: true, className: 'dark-popup' }">
@@ -377,8 +385,12 @@
                       <div class="popup-stat">
                         <span class="popup-stat-label">คาดว่าฝนจะเคลื่อนมาถึง</span>
                         <span class="popup-stat-value" style="color: #2563eb">
-                          อีก {{ pi + 1 }} ชั่วโมง
+                          อีก {{ point.hours || pi + 1 }} ชั่วโมง
                         </span>
+                      </div>
+                      <div class="popup-stat">
+                        <span class="popup-stat-label">ระยะจากจุดฝน</span>
+                        <span class="popup-stat-value">{{ point.distanceKm || '-' }} km</span>
                       </div>
                       <div class="popup-stat">
                         <span class="popup-stat-label">ปริมาณฝนสะสม</span>
@@ -780,6 +792,35 @@ function getSpreadCellColor(probability) {
   return '#eab308'
 }
 
+// === Fire timeline path segments (dotted lines) ===
+function getFireTimelineSegments(pred) {
+  if (!pred.timelinePath || !pred.timelinePath.length) return []
+
+  const segments = []
+  const points = [
+    [pred.center.lat, pred.center.lng],
+    ...pred.timelinePath.map(p => [p.lat, p.lng])
+  ]
+
+  const colors = ['#dc2626', '#f97316', '#f59e0b', '#eab308']
+  const weights = [4, 3, 3, 2]
+  const opacities = [0.9, 0.8, 0.6, 0.4]
+
+  for (let i = 0; i < points.length - 1; i++) {
+    segments.push({
+      latlngs: [points[i], points[i + 1]],
+      options: {
+        color: colors[i] || '#eab308',
+        weight: weights[i] || 2,
+        opacity: opacities[i] || 0.4,
+        dashArray: '10, 8',
+      }
+    })
+  }
+
+  return segments
+}
+
 
 
 function getLevelColor(station) {
@@ -816,18 +857,18 @@ function getRainPathSegments(rain) {
     ...rain.predictedPath.map(p => [p.lat, p.lng])
   ]
 
-  const colors = ['#3b82f6', '#2563eb', '#1d4ed8'] // gradient: lighter → darker
-  const weights = [4, 3, 2]
-  const opacities = [0.9, 0.7, 0.5]
+  const colors = ['#3b82f6', '#2563eb', '#1d4ed8', '#1e3a8a']
+  const weights = [4, 3, 3, 2]
+  const opacities = [0.9, 0.7, 0.5, 0.35]
 
   for (let i = 0; i < points.length - 1; i++) {
     segments.push({
       latlngs: [points[i], points[i + 1]],
       options: {
-        color: colors[i] || '#1d4ed8',
+        color: colors[i] || '#1e3a8a',
         weight: weights[i] || 2,
-        opacity: opacities[i] || 0.5,
-        dashArray: '10, 6',
+        opacity: opacities[i] || 0.35,
+        dashArray: '10, 8',
       }
     })
   }
@@ -968,6 +1009,42 @@ function getRainIntensityLabel(intensity) {
 
 .rain-time-badge.hour-3 {
   background: #1e40af;
+}
+
+.rain-time-badge.hour-6 {
+  background: #1e3a8a;
+}
+
+/* Fire timeline badges */
+.fire-timeline-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #dc2626;
+  border-radius: 10px;
+  padding: 2px 6px;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(220, 38, 38, 0.5);
+  border: 1.5px solid rgba(255, 255, 255, 0.6);
+}
+
+.fire-timeline-badge.hour-1 {
+  background: #dc2626;
+}
+
+.fire-timeline-badge.hour-3 {
+  background: #f97316;
+}
+
+.fire-timeline-badge.hour-6 {
+  background: #f59e0b;
+  color: #1a1a1a;
+}
+
+.fire-timeline-badge.hour-12 {
+  background: #eab308;
+  color: #1a1a1a;
 }
 
 .custom-marker-pulse.safe {

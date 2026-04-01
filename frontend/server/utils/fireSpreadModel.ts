@@ -29,6 +29,14 @@ interface SpreadCell {
     direction: string    // N, NE, E, SE, S, SW, W, NW
 }
 
+interface SpreadTimelinePoint {
+    lat: number
+    lng: number
+    hours: number
+    distanceKm: number
+    estimatedAreaSqKm: number
+}
+
 interface FireSpreadPrediction {
     fireId: string
     center: { lat: number, lng: number }
@@ -38,6 +46,7 @@ interface FireSpreadPrediction {
     spreadCells: SpreadCell[]
     maxSpreadKm: number
     spreadArrow: { lat: number, lng: number }  // endpoint of wind arrow
+    timelinePath: SpreadTimelinePoint[]        // positions at 1h, 3h, 6h, 12h
 }
 
 // Direction offsets for 8 neighbors (row, col) and their angles
@@ -146,6 +155,16 @@ export function predictFireSpread(
     const arrowDistance = baseSpreadKm * 1.2
     const spreadArrow = moveLatLng(fire.lat, fire.lng, spreadDir, arrowDistance)
 
+    // Timeline path: projected fire front positions at 1h, 3h, 6h, 12h
+    const timelineHours = [1, 3, 6, 12]
+    const spreadRateKmPerHour = baseSpreadKm / 6 // base spread is ~6 hours
+    const timelinePath: SpreadTimelinePoint[] = timelineHours.map(h => {
+        const distKm = Math.round(spreadRateKmPerHour * h * 10) / 10
+        const area = Math.round(Math.PI * distKm * distKm * 100) / 100
+        const pos = moveLatLng(fire.lat, fire.lng, spreadDir, distKm)
+        return { lat: pos.lat, lng: pos.lng, hours: h, distanceKm: distKm, estimatedAreaSqKm: area }
+    })
+
     return {
         fireId,
         center: { lat: fire.lat, lng: fire.lng },
@@ -155,6 +174,7 @@ export function predictFireSpread(
         spreadCells,
         maxSpreadKm: Math.round(baseSpreadKm * 10) / 10,
         spreadArrow,
+        timelinePath,
     }
 }
 
@@ -166,7 +186,7 @@ export function predictRainDirection(
     lng: number,
     rain24h: number,
     wind: WindData
-): { directionDeg: number, directionLabel: string, predictedPath: Array<{ lat: number, lng: number }> } {
+): { directionDeg: number, directionLabel: string, speedKmh: number, predictedPath: Array<{ lat: number, lng: number, hours: number, distanceKm: number }> } {
     // Rain clouds move in the wind direction
     const dirDeg = wind.deg
     const dirLabel = degToCompass(dirDeg)
@@ -175,11 +195,13 @@ export function predictRainDirection(
     const speedKmh = wind.speed * 3.6
     const predictedPath = []
 
-    // Predict position at 1h, 2h, 3h
-    for (let h = 1; h <= 3; h++) {
-        const distKm = speedKmh * h
-        predictedPath.push(moveLatLng(lat, lng, dirDeg, distKm))
+    // Predict position at 1h, 2h, 3h, 6h
+    const hours = [1, 2, 3, 6]
+    for (const h of hours) {
+        const distKm = Math.round(speedKmh * h * 10) / 10
+        const pos = moveLatLng(lat, lng, dirDeg, distKm)
+        predictedPath.push({ ...pos, hours: h, distanceKm: distKm })
     }
 
-    return { directionDeg: dirDeg, directionLabel: dirLabel, predictedPath }
+    return { directionDeg: dirDeg, directionLabel: dirLabel, speedKmh, predictedPath }
 }
