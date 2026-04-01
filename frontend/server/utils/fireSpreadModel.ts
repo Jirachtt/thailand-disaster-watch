@@ -55,9 +55,9 @@ const DIRECTIONS = [
 /**
  * Convert wind degrees to compass direction
  */
-function degToCompass(deg: number): string {
+export function degToCompass(deg: number): string {
     const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
-    return dirs[Math.round(deg / 45) % 8]
+    return dirs[Math.round(deg / 45) % 8] || 'N'
 }
 
 /**

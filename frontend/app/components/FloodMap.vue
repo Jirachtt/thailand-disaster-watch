@@ -89,42 +89,89 @@
             </LMarker>
           </template>
 
-          <!-- Fire Spread Prediction (Wind-based CA arrows) -->
-          <template v-if="showPredictions && spreadPredictions.length">
-            <template v-for="pred in spreadPredictions" :key="'spread-' + pred.fireId">
-              <!-- Wind direction arrow (main spread direction) -->
-              <LPolyline
-                :lat-lngs="[[pred.center.lat, pred.center.lng], [pred.spreadArrow.lat, pred.spreadArrow.lng]]"
-                :options="{ color: '#ff6b35', weight: 3, opacity: 0.8, dashArray: '8,6' }"
-              />
-              <!-- Spread probability circles in 8 directions -->
+          <!-- Fire Spread Prediction (Rings) -->
+          <template v-if="showPredictions">
+            <template v-for="fire in displayedFires" :key="'pred-' + fire.id">
               <LCircle
-                v-for="(cell, ci) in pred.spreadCells.filter(c => c.probability > 0.2)"
-                :key="'cell-' + pred.fireId + '-' + ci"
-                :lat-lng="[cell.lat, cell.lng]"
-                :radius="cell.distanceKm * 500"
-                :options="{
-                  color: cell.probability > 0.6 ? '#dc2626' : cell.probability > 0.3 ? '#f97316' : '#f59e0b',
-                  fillColor: cell.probability > 0.6 ? '#dc2626' : cell.probability > 0.3 ? '#f97316' : '#f59e0b',
-                  fillOpacity: cell.probability * 0.4,
-                  weight: 1,
-                  opacity: 0.5,
-                }"
+                v-for="(ring, ri) in getFireSpreadRings(fire.id)"
+                :key="'ring-' + fire.id + '-' + ri"
+                :lat-lng="[fire.lat, fire.lng]"
+                :radius="ring.radiusMeters"
+                :options="ring.options"
               >
                 <LPopup :options="{ className: 'dark-popup' }">
                   <div class="popup-content">
-                    <div class="popup-name" style="color: #f97316">ทิศ {{ cell.direction }}</div>
+                    <div class="popup-name" style="color: #f97316">คาดการณ์ลุกลามไฟ</div>
+                    <div class="popup-type">{{ fire.name }}</div>
                     <div class="popup-stat">
-                      <span class="popup-stat-label">ความน่าจะเป็น</span>
+                      <span class="popup-stat-label">ระยะเวลา</span>
+                      <span class="popup-stat-value" style="color: #f97316">+{{ ring.hours }} ชม.</span>
+                    </div>
+                    <div class="popup-stat">
+                      <span class="popup-stat-label">รัศมีคาดการณ์</span>
+                      <span class="popup-stat-value">{{ (ring.radiusMeters / 1000).toFixed(2) }} km</span>
+                    </div>
+                  </div>
+                </LPopup>
+              </LCircle>
+            </template>
+          </template>
+
+          <!-- Fire Spread Direction Arrows (CA+Wind model) -->
+          <template v-if="showPredictions">
+            <template v-for="pred in spreadPredictions" :key="'spread-' + pred.fireId">
+              <!-- Main wind direction arrow -->
+              <LPolyline
+                v-if="pred.spreadArrow"
+                :lat-lngs="[[pred.center.lat, pred.center.lng], [pred.spreadArrow.lat, pred.spreadArrow.lng]]"
+                :options="{ color: '#ff4500', weight: 4, opacity: 0.9, dashArray: '8, 6' }"
+              />
+              <!-- Arrow tip marker -->
+              <LMarker
+                v-if="pred.spreadArrow"
+                :lat-lng="[pred.spreadArrow.lat, pred.spreadArrow.lng]"
+              >
+                <LIcon :icon-size="[40, 20]" :icon-anchor="[20, 10]" class-name="station-icon-transparent">
+                  <div class="fire-direction-arrow">
+                    🔥→ {{ pred.windDirection }}
+                  </div>
+                </LIcon>
+                <LPopup :options="{ className: 'dark-popup' }">
+                  <div class="popup-content">
+                    <div class="popup-name" style="color: #ff4500">🔥 ทิศทางลามไฟ</div>
+                    <div class="popup-stat">
+                      <span class="popup-stat-label">ทิศทาง</span>
+                      <span class="popup-stat-value" style="color: #ff4500">{{ pred.windDirection }} ({{ pred.windDeg }}°)</span>
+                    </div>
+                    <div class="popup-stat">
+                      <span class="popup-stat-label">ลม</span>
+                      <span class="popup-stat-value">{{ pred.windSpeed?.toFixed(1) }} m/s</span>
+                    </div>
+                    <div class="popup-stat">
+                      <span class="popup-stat-label">ระยะลุกลามสูงสุด</span>
+                      <span class="popup-stat-value" style="color: #dc2626">{{ pred.maxSpreadKm }} km</span>
+                    </div>
+                  </div>
+                </LPopup>
+              </LMarker>
+              <!-- Spread probability cells (8-direction grid) -->
+              <LCircle
+                v-for="(cell, ci) in (pred.spreadCells || []).filter(c => c.probability >= 0.3)"
+                :key="'cell-' + pred.fireId + '-' + ci"
+                :lat-lng="[cell.lat, cell.lng]"
+                :radius="cell.distanceKm * 300"
+                :options="{ color: getSpreadCellColor(cell.probability), fillColor: getSpreadCellColor(cell.probability), fillOpacity: cell.probability * 0.4, weight: 1, opacity: 0.6 }"
+              >
+                <LPopup :options="{ className: 'dark-popup' }">
+                  <div class="popup-content">
+                    <div class="popup-name" style="color: #ff4500">ทิศ {{ cell.direction }}</div>
+                    <div class="popup-stat">
+                      <span class="popup-stat-label">โอกาสลุกลาม</span>
                       <span class="popup-stat-value" style="color: #f97316">{{ (cell.probability * 100).toFixed(0) }}%</span>
                     </div>
                     <div class="popup-stat">
                       <span class="popup-stat-label">ระยะทาง</span>
                       <span class="popup-stat-value">{{ cell.distanceKm }} km</span>
-                    </div>
-                    <div class="popup-stat">
-                      <span class="popup-stat-label">ลม</span>
-                      <span class="popup-stat-value">{{ pred.windSpeed.toFixed(1) }} m/s {{ pred.windDirection }}</span>
                     </div>
                   </div>
                 </LPopup>
@@ -599,7 +646,7 @@ watch(() => props.focusStation, (newVal) => {
 
 // === Layer toggles ===
 const showFires = ref(true)
-const showAllFires = ref(false)
+const showAllFires = ref(true)
 const showPredictions = ref(true)
 const showWater = ref(false)
 const showReports = ref(true)
@@ -649,39 +696,40 @@ function drawRoute() {
 }
 
 function toggleFires() {
-  if (!showFires.value) {
-    // OFF → show top 20
-    showFires.value = true
-    showAllFires.value = false
-  } else if (!showAllFires.value) {
-    // Show top 20 → show all
-    showAllFires.value = true
-  } else {
-    // Show all → OFF
+  if (showFires.value && showAllFires.value) {
+    // Thai+World → OFF
     showFires.value = false
     showAllFires.value = false
     showPredictions.value = false
+  } else if (!showFires.value) {
+    // OFF → Thai only
+    showFires.value = true
+    showAllFires.value = false
+    showPredictions.value = true
+  } else {
+    // Thai only → Thai+World
+    showAllFires.value = true
+    showPredictions.value = true
   }
 }
 
 const fireButtonLabel = computed(() => {
   if (!showFires.value) return 'ไฟ ปิด'
-  if (showAllFires.value) return `ไฟ ทั้งหมด`
-  return `ไฟ ไทย+โลก20`
+  if (showAllFires.value) return `ไฟ ทั่วโลก`
+  return `ไฟ (ไทย)`
 })
 
 // === Computed data ===
 const displayedFires = computed(() => {
   if (!showFires.value) return []
-  if (showAllFires.value) return props.worldFires
-  // Default: ALL Thai fires + Top 20 world fires
-  const worldTop20 = [...props.worldFires]
-    .sort((a, b) => (b.intensityLevel || 0) - (a.intensityLevel || 0))
-    .slice(0, 20)
-  // Merge, deduplicate by id
-  const thaiIds = new Set(props.fires.map((f) => f.id))
-  const merged = [...props.fires, ...worldTop20.filter((f) => !thaiIds.has(f.id))]
-  return merged
+  if (showAllFires.value) {
+    // Merge Thai and World fires
+    const thaiIds = new Set(props.fires.map((f) => f.id))
+    const merged = [...props.fires, ...props.worldFires.filter((f) => !thaiIds.has(f.id))]
+    return merged
+  }
+  // Default: Only Thai fires
+  return props.fires
 })
 
 const hasFloodRisk = computed(() => {
@@ -692,9 +740,9 @@ const warningCount = computed(() => {
   return props.stations.filter((s) => s.riskLevel === 'warning' || s.riskLevel === 'danger').length
 })
 
-// === Helper functions ===
-function getFireSpreadRings(fire) {
-  if (!fire.predictions) return []
+function getFireSpreadRings(fireId) {
+  const fire = props.fires.find((f) => f.id === fireId) || props.worldFires.find((f) => f.id === fireId)
+  if (!fire || !fire.predictions) return []
 
   const ringHours = [1, 3, 6, 12]
   const rings = []
@@ -724,6 +772,15 @@ function getFireSpreadRings(fire) {
 
   return rings.reverse()
 }
+
+function getSpreadCellColor(probability) {
+  if (probability >= 0.8) return '#dc2626'
+  if (probability >= 0.5) return '#f97316'
+  if (probability >= 0.3) return '#f59e0b'
+  return '#eab308'
+}
+
+
 
 function getLevelColor(station) {
   if (station.riskLevel === 'danger') return 'var(--color-danger)'

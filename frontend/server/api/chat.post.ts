@@ -1,3 +1,6 @@
+import { fetchRealFireData, fetchRealWaterData, fetchRealRainData } from '../utils/realTimeData'
+import { fetchAirQualityData } from '../utils/airQuality'
+
 export default defineEventHandler(async (event) => {
     const body = await readBody(event)
     const userMessage = body?.message
@@ -9,27 +12,116 @@ export default defineEventHandler(async (event) => {
         })
     }
 
-    // TODO: In a real app, integrate with OpenAI/Gemini API here
-    // For the competition, we will use a rule-based mock that looks very intelligent
-    // and uses keywords to simulate LLM context awareness.
+    // Fetch all real-time data from cached sources (fast — 5-min TTL cache)
+    const [fireData, waterData, rainData, aqiData] = await Promise.all([
+        fetchRealFireData().catch(() => null),
+        fetchRealWaterData().catch(() => null),
+        fetchRealRainData().catch(() => null),
+        fetchAirQualityData().catch(() => null),
+    ])
 
-    await new Promise((resolve) => setTimeout(resolve, 1500 + Math.random() * 1000)) // Simulate network delay
+    // Extract real-time stats
+    const thaiFires = fireData?.fires || []
+    const worldFires = fireData?.worldFires || []
+    const thaiFireCount = fireData?.activeCount || 0
+    const worldFireCount = fireData?.worldCount || 0
+    const overallFireRisk = fireData?.overallFireRisk || 'low'
 
-    let response = ''
+    const waterStations = waterData?.stations || []
+    const overallWaterRisk = waterData?.overallRisk || 'safe'
+    const dangerStations = waterStations.filter((s: any) => s.riskLevel === 'danger')
+    const warningStations = waterStations.filter((s: any) => s.riskLevel === 'warning' || s.riskLevel === 'critical')
+
+    const rainStations = rainData?.rainStations || []
+    const totalRainStations = rainData?.totalStations || 0
+    const heavyRainStations = rainStations.filter((s: any) => s.intensity === 'extreme' || s.intensity === 'heavy')
+
+    const aqiStations = aqiData?.stations || []
+    const worstAqi = aqiStations.length > 0
+        ? aqiStations.reduce((w: any, s: any) => (s.aqi > w.aqi ? s : w), aqiStations[0])
+        : null
+
     const msgLower = userMessage.toLowerCase()
 
-    // Keyword Matching Logic (Mock AI)
-    if (msgLower.includes('เชียงใหม่') || msgLower.includes('ปลอดภัยไหม')) {
-        response = '📍 **สถานการณ์เชียงใหม่ปัจจุบัน (วิเคราะห์จากข้อมูล AI):**\n\n- **น้ำท่วม:** ระดับน้ำที่ ปตร. คลองลัดบางยอ อยู่ในเกณฑ์ต้องเฝ้าระวัง (1.61m)\n- **ไฟป่า:** ตรวจพบจุดความร้อนสะสม 3 จุดในรัศมี 50 กม. รอบเมือง\n\nสรุป: แนะนำให้หลีกเลี่ยงพื้นที่ริมแม่น้ำปิงครับ และสวมหน้ากาก N95 หากอยู่กลางแจ้ง เนื่องจากอาจมีฝุ่นควันจากไฟป่า'
-    } else if (msgLower.includes('ไฟไหม้') || msgLower.includes('ไฟป่า')) {
-        response = '🔥 ตรวจพบจุดความร้อน (Hotspots) ที่อาจเป็นไฟป่า 3 จุดครับ:\n\n1. บริเวณดอยสุเทพ (รุนแรง)\n2. พื้นที่แม่ขะจาน\n3. ทิศใต้อำเภอหางดง\n\nAI คาดการณ์ว่าไฟจะลุกลามขยายพื้นที่ประมาณ 8.5 ตร.กม. ภายใน 12 ชม. แนะนำติดตามสถานการณ์ใกล้ชิดครับ'
-    } else if (msgLower.includes('น้ำท่วม') || msgLower.includes('ฝน')) {
-        response = '💧 **สรุปสถานการณ์น้ำ:**\n- ปริมาณฝน 24 ชม.: 0.0 mm\n- ระดับน้ำสูงสุด: ปตร. วัดบางกระเจ้านอก (1.79m)\n- แนวโน้ม: ทรงตัว\n\nAI ประเมินความเสี่ยงน้ำท่วมรวมอยู่ในระดับ "ปานกลาง" ครับ แต่พื้นที่ลุ่มต่ำยังต้องเฝ้าระวัง'
-    } else if (msgLower.includes('อพยพ') || msgLower.includes('หนี')) {
-        response = '⚠️ **ข้อแนะนำการอพยพ:**\nขณะนี้ศูนย์พักพิงที่ใกล้ที่สุดคือ:\n1. โรงเรียนสนามกีฬาเทศบาลนครเชียงใหม่\n2. ศูนย์ประชุมและแสดงสินค้านานาชาติฯ\n\n*โปรดเตรียมเอกสารสำคัญและยารักษาโรคให้พร้อมครับ*'
+    let response = ''
+
+    // === Fire-related questions ===
+    if (msgLower.includes('ไฟ') || msgLower.includes('fire') || msgLower.includes('hotspot') || msgLower.includes('จุดความร้อน')) {
+        const topFires = thaiFires.slice(0, 5)
+        const fireList = topFires.map((f: any, i: number) =>
+            `${i + 1}. ${f.name} — ความรุนแรง: ${f.intensity === 'extreme' ? 'รุนแรงมาก' : f.intensity === 'high' ? 'รุนแรง' : f.intensity === 'medium' ? 'ปานกลาง' : 'เบา'}, FRP: ${f.frp} MW, พื้นที่: ${f.areaSqKm} ตร.กม.`
+        ).join('\n')
+
+        const spreadInfo = topFires.length > 0 && topFires[0].peakEstimate
+            ? `\n\n📊 คาดการณ์ลุกลาม 12 ชม.: จุดไฟรุนแรงสุดอาจขยายเป็น ${topFires[0].peakEstimate.areaSqKm} ตร.กม. (รัศมี ${topFires[0].peakEstimate.radiusKm} กม.)`
+            : ''
+
+        if (thaiFireCount === 0) {
+            response = `🔥 **สถานการณ์ไฟป่าในประเทศไทย (Real-time):**\n\nขณะนี้ไม่พบจุดความร้อนในประเทศไทยจากดาวเทียม NASA FIRMS\n\n🌍 ทั่วโลก: ตรวจพบ ${worldFireCount} กลุ่มจุดไฟ\n\nแหล่งข้อมูล: ${fireData?.source || 'NASA FIRMS'}`
+        } else {
+            response = `🔥 **สถานการณ์ไฟป่าในประเทศไทย (Real-time):**\n\n• จุดไฟในไทย: **${thaiFireCount} จุด**\n• ทั่วโลก: **${worldFireCount} กลุ่ม**\n• ระดับความเสี่ยง: **${overallFireRisk === 'extreme' ? '🔴 รุนแรงมาก' : overallFireRisk === 'high' ? '🟠 รุนแรง' : overallFireRisk === 'medium' ? '🟡 ปานกลาง' : '🟢 ปกติ'}**\n\n📍 จุดไฟที่รุนแรงที่สุด:\n${fireList || 'ไม่มีข้อมูล'}${spreadInfo}\n\nแหล่งข้อมูล: ${fireData?.source || 'NASA FIRMS'} (${fireData?.dataDelay || 'NRT'})`
+        }
+
+        // === Water level / flood questions ===
+    } else if (msgLower.includes('น้ำ') || msgLower.includes('ท่วม') || msgLower.includes('flood') || msgLower.includes('water') || msgLower.includes('ระดับ')) {
+        const topDanger = dangerStations.slice(0, 3).map((s: any, i: number) =>
+            `${i + 1}. ${s.name} — ระดับ: ${s.currentLevel.toFixed(2)} m (${s.description})`
+        ).join('\n')
+
+        const topWarning = warningStations.slice(0, 3).map((s: any, i: number) =>
+            `${i + 1}. ${s.name} — ระดับ: ${s.currentLevel.toFixed(2)} m`
+        ).join('\n')
+
+        const riskLabel = overallWaterRisk === 'danger' ? '🔴 วิกฤต' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง' : '🟢 ปกติ'
+
+        response = `💧 **สถานการณ์ระดับน้ำ (Real-time):**\n\n• สถานีทั้งหมด: **${waterStations.length} แห่ง**\n• ระดับความเสี่ยงรวม: **${riskLabel}**\n• วิกฤต (ล้นตลิ่ง): ${dangerStations.length} แห่ง\n• เฝ้าระวัง: ${warningStations.length} แห่ง`
+
+        if (topDanger.length > 0) {
+            response += `\n\n🚨 สถานีวิกฤต:\n${topDanger}`
+        }
+        if (topWarning.length > 0) {
+            response += `\n\n⚠️ สถานีเฝ้าระวัง:\n${topWarning}`
+        }
+
+        response += `\n\nแหล่งข้อมูล: ${waterData?.source || 'ThaiWater API'}`
+
+        // === Rain questions ===
+    } else if (msgLower.includes('ฝน') || msgLower.includes('rain') || msgLower.includes('ฝนตก')) {
+        const topRain = rainStations.slice(0, 5).map((s: any, i: number) =>
+            `${i + 1}. ${s.name} (${s.province}) — ${s.rain24h} mm (${s.intensity === 'extreme' ? 'หนักมาก' : s.intensity === 'heavy' ? 'หนัก' : s.intensity === 'moderate' ? 'ปานกลาง' : 'เบา'})`
+        ).join('\n')
+
+        response = `🌧️ **สถานการณ์ฝนตก (Real-time):**\n\n• สถานีที่มีฝนตก: **${totalRainStations} แห่ง**\n• ฝนหนัก-หนักมาก: **${heavyRainStations.length} แห่ง**\n\n📍 สถานีฝนตกหนักสุด:\n${topRain || 'ไม่มีฝนตก'}\n\nแหล่งข้อมูล: ${rainData?.source || 'ThaiWater API'}`
+
+        // === AQI / PM2.5 / Air quality ===
+    } else if (msgLower.includes('aqi') || msgLower.includes('pm2.5') || msgLower.includes('pm25') || msgLower.includes('ฝุ่น') || msgLower.includes('อากาศ') || msgLower.includes('ควัน') || msgLower.includes('หมอก')) {
+        const aqiList = aqiStations.slice(0, 8).map((s: any, i: number) =>
+            `${i + 1}. ${s.name} — AQI: ${s.aqi} (${s.label}), PM2.5: ${s.pm25 || 'N/A'} µg/m³`
+        ).join('\n')
+
+        response = `😷 **คุณภาพอากาศ (Real-time):**\n\n• จำนวนสถานี: **${aqiStations.length} แห่ง**`
+
+        if (worstAqi) {
+            response += `\n• แย่ที่สุด: **${worstAqi.name} — AQI ${worstAqi.aqi} (${worstAqi.label})**`
+        }
+
+        response += `\n\n📍 ข้อมูลรายเมือง:\n${aqiList || 'ไม่มีข้อมูล'}\n\nแหล่งข้อมูล: ${aqiData?.source || 'AQICN'}`
+
+        // === Evacuation ===
+    } else if (msgLower.includes('อพยพ') || msgLower.includes('หนี') || msgLower.includes('evacuat')) {
+        response = `⚠️ **ข้อแนะนำการอพยพ:**\n\nศูนย์พักพิงใกล้เคียง:\n1. โรงเรียนสนามกีฬาเทศบาลนครเชียงใหม่\n2. ศูนย์ประชุมและแสดงสินค้านานาชาติฯ\n\n📌 สถานการณ์ปัจจุบัน:\n• น้ำ: ${overallWaterRisk === 'danger' ? '🔴 วิกฤต — ควรเตรียมอพยพ' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง' : '🟢 ปกติ'}\n• ไฟป่า: ${thaiFireCount} จุด (${overallFireRisk})\n\n*เตรียมเอกสารสำคัญและยารักษาโรคให้พร้อมครับ*`
+
+        // === General / สรุป / summary ===
+    } else if (msgLower.includes('สรุป') || msgLower.includes('ตอนนี้') || msgLower.includes('สถานการณ์') || msgLower.includes('summary') || msgLower.includes('เป็นยังไง')) {
+        response = `📊 **สรุปสถานการณ์ภัยพิบัติ (Real-time):**\n\n🔥 ไฟป่าในไทย: **${thaiFireCount} จุด** (ความเสี่ยง: ${overallFireRisk === 'extreme' ? 'รุนแรงมาก' : overallFireRisk === 'high' ? 'รุนแรง' : overallFireRisk === 'medium' ? 'ปานกลาง' : 'ปกติ'})\n💧 ระดับน้ำ: **${overallWaterRisk === 'danger' ? '🔴 วิกฤต' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง' : '🟢 ปกติ'}** (${waterStations.length} สถานี)\n🌧️ ฝนตก: **${totalRainStations} สถานี** (หนัก ${heavyRainStations.length} แห่ง)\n😷 AQI แย่สุด: **${worstAqi ? `${worstAqi.name} AQI ${worstAqi.aqi}` : 'ไม่มีข้อมูล'}**\n🌍 ไฟทั่วโลก: ${worldFireCount} กลุ่ม\n\nข้อมูลจาก: NASA FIRMS, ThaiWater, AQICN (อัปเดตทุก 5 นาที)`
+
+        // === Safety questions (specific area) ===
+    } else if (msgLower.includes('ปลอดภัย') || msgLower.includes('safe') || msgLower.includes('เชียงใหม่')) {
+        response = `📍 **วิเคราะห์สถานการณ์ปัจจุบัน (Real-time):**\n\n• ไฟป่า: ${thaiFireCount > 0 ? `ตรวจพบ **${thaiFireCount} จุด** ในไทย` : 'ไม่พบจุดความร้อน ✅'}\n• ระดับน้ำ: ${overallWaterRisk === 'danger' ? '🔴 มีสถานีวิกฤต ' + dangerStations.length + ' แห่ง' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง ' + warningStations.length + ' แห่ง' : '🟢 ปกติ'}\n• ฝนตก: ${totalRainStations > 0 ? `${totalRainStations} สถานี (หนัก ${heavyRainStations.length})` : 'ไม่มีฝนตก'}\n• อากาศ: ${worstAqi ? `AQI สูงสุด ${worstAqi.aqi} (${worstAqi.label}) — ${worstAqi.name}` : 'ไม่มีข้อมูล'}${worstAqi && worstAqi.aqi > 100 ? '\n\n⚠️ แนะนำสวมหน้ากาก N95 เมื่ออยู่กลางแจ้ง' : ''}`
+
+        // === Default fallback with data summary ===
     } else {
-        // Default fallback
-        response = 'เข้าใจแล้วครับ ข้อมูลนี้ทางเรากำลังติดตามและรวบรวมเพิ่มเติม \nหากต้องการดูรายละเอียด คุณสามารถซูมดูจุดเสี่ยงใน **แผนที่หลัก** ด้านซ้าย หรือคลิกเลือก **สถานีตรวจวัด** ทางขวาเพื่อดูพยากรณ์ล่วงหน้า 12 ชม. ครับ'
+        response = `เข้าใจแล้วครับ 😊 ผมตอบได้เกี่ยวกับ:\n\n• **ไฟป่า** — จุดความร้อน, ทิศทางลามไฟ (ตอนนี้ ${thaiFireCount} จุดในไทย)\n• **ระดับน้ำ** — สถานีวัดระดับน้ำ, ความเสี่ยงน้ำท่วม\n• **ฝนตก** — สถานีฝน, ปริมาณสะสม\n• **คุณภาพอากาศ** — AQI, PM2.5\n• **สรุปสถานการณ์** — ภาพรวมทั้งหมด\n• **อพยพ** — ศูนย์พักพิง, คำแนะนำ\n\nลองถามเช่น "ไฟป่าตอนนี้กี่จุด?" หรือ "สรุปสถานการณ์" ครับ`
     }
 
     return {

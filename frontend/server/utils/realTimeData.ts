@@ -1,6 +1,6 @@
 // Real-time data fetching from NASA FIRMS and ThaiWater APIs
 
-import { predictFireSpread, predictRainDirection } from './fireSpreadModel'
+import { predictFireSpread, predictRainDirection, degToCompass } from './fireSpreadModel'
 
 // ============================================
 // OpenWeatherMap — Wind/Weather Data
@@ -177,7 +177,6 @@ function generateFireSpreadPrediction(fire: any) {
         const prevIdx = hoursToPredict.indexOf(h)
         const prevH = prevIdx > 0 ? (hoursToPredict[prevIdx - 1] ?? 0) : 0
         currentArea += spreadRate * (h - prevH)
-        currentArea += (Math.random() - 0.3) * 0.05
 
         const radiusKm = Math.sqrt(Math.max(0.01, currentArea) / Math.PI)
         const confidence = Math.max(40, 95 - h * 4.5)
@@ -187,7 +186,7 @@ function generateFireSpreadPrediction(fire: any) {
             estimatedAreaSqKm: Math.round(currentArea * 100) / 100,
             estimatedRadiusKm: Math.round(radiusKm * 100) / 100,
             spreadRate: Math.round(spreadRate * 100) / 100,
-            spreadDirectionDeg: (fire.windDirectionDeg || 0) + (Math.random() - 0.5) * 30,
+            spreadDirectionDeg: fire.windDirectionDeg || 0,
             spreadDirection: fire.windDirection || 'N/A',
             confidence: Math.round(confidence * 10) / 10,
         })
@@ -203,16 +202,28 @@ export async function fetchRealFireData() {
     const firmsKey = config.firmsMapKey
 
     if (!firmsKey) {
-        console.log('[FIRMS] No API key set, using mock data. Set FIRMS_MAP_KEY env var.')
-        return getFireSummary()
+        console.log('[FIRMS] No API key set. Set FIRMS_MAP_KEY env var.')
+        return {
+            timestamp: new Date().toISOString(),
+            source: 'NASA FIRMS',
+            dataDelay: 'NRT',
+            dataRange: '24h',
+            activeCount: 0,
+            totalCount: 0,
+            worldCount: 0,
+            overallFireRisk: 'low',
+            fires: [],
+            worldFires: [],
+            spreadPredictions: []
+        }
     }
 
     try {
-        // Fetch Thailand fires (primary) + World fires (for "show all")
+        // Fetch Thailand fires (primary)
         const thaiUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/${CM_BBOX}/1`
         const worldUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/world/1`
 
-        // Fetch both in parallel
+        // Fetch concurrently, but allow world to fail gracefully without breaking Thai data
         const [thaiResponse, worldResponse] = await Promise.all([
             $fetch<string>(thaiUrl, { responseType: 'text', timeout: 15000 }).catch(() => ''),
             $fetch<string>(worldUrl, { responseType: 'text', timeout: 30000 }).catch(() => ''),
@@ -226,7 +237,8 @@ export async function fetchRealFireData() {
         // Process Thailand fires (for alert bar, stats, spread predictions)
         const processRecords = (records: FirmsRecord[]) => {
             if (records.length === 0) return []
-            const clusters = clusterFires(records, 3)
+            // Increase clustering threshold from 3km to 15km to prevent map clutter (e.g., 700+ fires)
+            const clusters = clusterFires(records, 15)
             return clusters.map((cluster, idx) => {
                 const lat = cluster.reduce((s, r) => s + r.latitude, 0) / cluster.length
                 const lng = cluster.reduce((s, r) => s + r.longitude, 0) / cluster.length
@@ -274,16 +286,51 @@ export async function fetchRealFireData() {
                     },
                     intensityLevel: getIntensityLevel(intensity),
                 }
-            }).sort((a, b) => b.intensityLevel - a.intensityLevel)
+            })
+                // Filter out minor fires to only show "really burning" ones
+                .filter(f => f.intensityLevel >= 2 || f.frp >= 20.0)
+                .sort((a, b) => b.intensityLevel - a.intensityLevel)
         }
 
         const thaiFires = processRecords(thaiRecords)
-        const worldFires = processRecords(worldRecords)
 
-        // Spread predictions — use Thai fires, fallback to world fires
+        // Fetch real wind data for Thai fires and update fire objects + regenerate predictions
+        console.log(`[FIRMS] Fetching real wind data for ${Math.min(thaiFires.length, 20)} Thai fires...`)
+        const windFetchFires = thaiFires.slice(0, 20)
+        await Promise.all(windFetchFires.map(async (fire) => {
+            try {
+                const wind = await fetchWindData(fire.lat, fire.lng)
+                fire.windSpeed = wind.speed
+                fire.windDirection = degToCompass(wind.deg)
+                fire.windDirectionDeg = wind.deg
+                fire.humidity = wind.humidity
+                fire.temperature = wind.temp
+                // Regenerate predictions with real wind data
+                fire.predictions = generateFireSpreadPrediction(fire)
+                const peakPrediction = fire.predictions[fire.predictions.length - 1]
+                fire.peakEstimate = {
+                    areaSqKm: peakPrediction.estimatedAreaSqKm,
+                    radiusKm: peakPrediction.estimatedRadiusKm,
+                    timeHours: peakPrediction.hoursFromNow,
+                }
+            } catch (e) { /* keep defaults */ }
+        }))
+
+        // Process World fires, but ONLY keep the top 20 most intense to avoid frontend lag
+        // Also exclude fires that are already inside the Thai bounding box to avoid duplicates
+        const worldFiresAll = processRecords(worldRecords)
+        const thaiBbox = { minLat: 5.6, maxLat: 20.5, minLng: 97.3, maxLng: 105.7 }
+
+        const topWorldFires = worldFiresAll
+            .filter(f => !(f.lat >= thaiBbox.minLat && f.lat <= thaiBbox.maxLat && f.lng >= thaiBbox.minLng && f.lng <= thaiBbox.maxLng))
+            .slice(0, 20)
+
+        console.log(`[FIRMS] Filtered World fires to top ${topWorldFires.length} extreme clusters`)
+
+        // Spread predictions (CA + Wind model) — use Thai fires with real wind
         const spreadPredictions: any[] = []
-        const predictionFires = thaiFires.length > 0 ? thaiFires.slice(0, 10) : worldFires.slice(0, 10)
-        console.log(`[FIRMS] Computing spread predictions for ${predictionFires.length} fires (${thaiFires.length > 0 ? 'Thai' : 'World'})...`)
+        const predictionFires = thaiFires.slice(0, 10)
+        console.log(`[FIRMS] Computing spread predictions for ${predictionFires.length} fires (Thai)...`)
         for (const fire of predictionFires) {
             try {
                 const wind = await fetchWindData(fire.lat, fire.lng)
@@ -304,18 +351,30 @@ export async function fetchRealFireData() {
             dataRange: 'ย้อนหลัง 24 ชั่วโมง',
             activeCount,
             totalCount: thaiFires.length,
-            worldCount: worldFires.length,
+            worldCount: worldFiresAll.length,
             overallFireRisk,
             fires: thaiFires,
-            worldFires,
+            worldFires: topWorldFires,
             spreadPredictions,
         }
 
         setCache('fires', result)
         return result
     } catch (error: any) {
-        console.error('[FIRMS] API error, falling back to mock:', error.message)
-        return getFireSummary()
+        console.error('[FIRMS] API error:', error.message)
+        return {
+            timestamp: new Date().toISOString(),
+            source: 'NASA FIRMS (Error)',
+            dataDelay: 'API Unavailable',
+            dataRange: 'N/A',
+            activeCount: 0,
+            totalCount: 0,
+            worldCount: 0,
+            overallFireRisk: 'low',
+            fires: [],
+            worldFires: [],
+            spreadPredictions: []
+        }
     }
 }
 
@@ -413,8 +472,14 @@ export async function fetchRealWaterData() {
             .sort((a: any, b: any) => (b.situation_level || 0) - (a.situation_level || 0))
 
         if (sortedStations.length === 0) {
-            console.log('[ThaiWater] No stations found in response, using mock data')
-            return getDashboardSummary()
+            console.log('[ThaiWater] No stations found in response.')
+            return {
+                timestamp: new Date().toISOString(),
+                source: 'ThaiWater API (No Data)',
+                dataDelay: 'API Unavailable',
+                overallRisk: 'safe',
+                stations: []
+            }
         }
 
         // Take top 50 most critical stations
@@ -506,7 +571,13 @@ export async function fetchRealWaterData() {
         setCache('water', result)
         return result
     } catch (error: any) {
-        console.error('[ThaiWater] API error, falling back to mock:', error.message)
-        return getDashboardSummary()
+        console.error('[ThaiWater] API error:', error.message)
+        return {
+            timestamp: new Date().toISOString(),
+            source: 'ThaiWater API (Error)',
+            dataDelay: 'API Unavailable',
+            overallRisk: 'safe',
+            stations: []
+        }
     }
 }

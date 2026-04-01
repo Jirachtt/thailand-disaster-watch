@@ -41,7 +41,7 @@ export const stations = [
 ]
 
 // Generate realistic time-series water level data
-function generateWaterLevelData(stationId, hours = 72) {
+function generateWaterLevelData(stationId: string, hours = 72) {
     const now = Date.now()
     const data = []
 
@@ -52,7 +52,7 @@ function generateWaterLevelData(stationId, hours = 72) {
         S003: { base: 1.8, amplitude: 0.7, noiseScale: 0.1, riseHour: 42 },
     }
 
-    const conf = config[stationId] || config.S002
+    const conf = config[stationId as keyof typeof config] || config.S002
 
     for (let h = hours; h >= 0; h--) {
         const timestamp = now - h * 3600000
@@ -76,7 +76,7 @@ function generateWaterLevelData(stationId, hours = 72) {
 }
 
 // Generate rainfall data
-function generateRainfallData(stationId, hours = 72) {
+function generateRainfallData(stationId: string, hours = 72) {
     const now = Date.now()
     const data = []
 
@@ -86,7 +86,7 @@ function generateRainfallData(stationId, hours = 72) {
         S003: { peakHour: 30, maxRain: 20, duration: 10 },
     }
 
-    const conf = rainConfigs[stationId] || rainConfigs.S002
+    const conf = rainConfigs[stationId as keyof typeof rainConfigs] || rainConfigs.S002
     let accumulated = 0
 
     for (let h = hours; h >= 0; h--) {
@@ -116,10 +116,10 @@ function generateRainfallData(stationId, hours = 72) {
 }
 
 // Generate prediction data (future 12 hours)
-function generatePredictionData(stationId) {
+function generatePredictionData(stationId: string) {
     const now = Date.now()
     const currentWaterData = generateWaterLevelData(stationId, 6)
-    const currentLevel = currentWaterData[currentWaterData.length - 1].level
+    const currentLevel = currentWaterData[currentWaterData.length - 1]!.level
     const predictions = []
 
     const trendConfig = {
@@ -128,7 +128,7 @@ function generatePredictionData(stationId) {
         S003: { trend: 0.04, noise: 0.07 },
     }
 
-    const conf = trendConfig[stationId] || trendConfig.S002
+    const conf = trendConfig[stationId as keyof typeof trendConfig] || trendConfig.S002
     let level = currentLevel
 
     for (let h = 1; h <= 12; h++) {
@@ -152,7 +152,7 @@ export function getDashboardSummary() {
         const rainfallData = generateRainfallData(station.id, 6)
         const predictions = generatePredictionData(station.id)
 
-        const currentLevel = waterData[waterData.length - 1].level
+        const currentLevel = waterData[waterData.length - 1]!.level
         const prevLevel = waterData[waterData.length - 3]?.level || currentLevel
         const trend = currentLevel - prevLevel
         const peakPredicted = Math.max(...predictions.map((p) => p.predictedLevel))
@@ -173,7 +173,7 @@ export function getDashboardSummary() {
             trend: Math.round(trend * 100) / 100,
             trendDirection: trend > 0.05 ? 'up' : trend < -0.05 ? 'down' : 'stable',
             rainfall: {
-                current: rainfallData[rainfallData.length - 1].amount,
+                current: rainfallData[rainfallData.length - 1]!.amount,
                 accumulated24h: rainfallData.slice(-24).reduce((sum, d) => sum + d.amount, 0),
             },
             riskLevel,
@@ -196,7 +196,7 @@ export function getDashboardSummary() {
     }
 }
 
-export function getStationTimeseries(stationId) {
+export function getStationTimeseries(stationId: string) {
     return {
         waterLevel: generateWaterLevelData(stationId, 72),
         rainfall: generateRainfallData(stationId, 72),
@@ -338,7 +338,7 @@ function getIntensityLevel(intensity: string) {
 export function getFireSummary() {
     const fires = fireHotspots.map((fire) => {
         const predictions = generateFireSpreadPrediction(fire)
-        const peakPrediction = predictions[predictions.length - 1]
+        const peakPrediction = predictions[predictions.length - 1]!
         const hoursActive = Math.round((Date.now() - new Date(fire.detectedAt).getTime()) / 3600000 * 10) / 10
 
         return {

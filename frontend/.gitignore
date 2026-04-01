@@ -23,4 +23,7 @@ logs
 .env.*
 !.env.example
 
+# SQLite database
+*.db
+
 /app/generated/prisma
