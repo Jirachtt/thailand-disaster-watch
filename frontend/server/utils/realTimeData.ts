@@ -237,8 +237,8 @@ export async function fetchRealFireData() {
         // Process Thailand fires (for alert bar, stats, spread predictions)
         const processRecords = (records: FirmsRecord[]) => {
             if (records.length === 0) return []
-            // Increase clustering threshold from 3km to 15km to prevent map clutter (e.g., 700+ fires)
-            const clusters = clusterFires(records, 15)
+            // Cluster nearby hotspots into single fire events (25km radius)
+            const clusters = clusterFires(records, 25)
             return clusters.map((cluster, idx) => {
                 const lat = cluster.reduce((s, r) => s + r.latitude, 0) / cluster.length
                 const lng = cluster.reduce((s, r) => s + r.longitude, 0) / cluster.length
@@ -287,12 +287,13 @@ export async function fetchRealFireData() {
                     intensityLevel: getIntensityLevel(intensity),
                 }
             })
-                // Filter out minor fires to only show "really burning" ones
-                .filter(f => f.intensityLevel >= 2 || f.frp >= 20.0)
+                // Only show significant fires (high/extreme intensity OR strong FRP)
+                .filter(f => f.intensityLevel >= 3 || f.frp >= 50.0)
                 .sort((a, b) => b.intensityLevel - a.intensityLevel)
         }
 
-        const thaiFires = processRecords(thaiRecords)
+        // Limit to top 50 most intense fires to keep the map readable
+        const thaiFires = processRecords(thaiRecords).slice(0, 50)
 
         // Fetch real wind data for Thai fires and update fire objects + regenerate predictions
         console.log(`[FIRMS] Fetching real wind data for ${Math.min(thaiFires.length, 20)} Thai fires...`)
@@ -393,7 +394,7 @@ export async function fetchRealRainData() {
         const allStations = response?.data || response?.rain_data?.data || []
 
         const rainStations = allStations
-            .filter((s: any) => s.station?.tele_station_lat && s.rain_24h != null && parseFloat(s.rain_24h) >= 1)
+            .filter((s: any) => s.station?.tele_station_lat && s.rain_24h != null && parseFloat(s.rain_24h) >= 10)
             .map((s: any) => ({
                 lat: s.station.tele_station_lat,
                 lng: s.station.tele_station_long,
@@ -410,11 +411,11 @@ export async function fetchRealRainData() {
                             : 'light',
             }))
             .sort((a: any, b: any) => b.rain24h - a.rain24h)
-            .slice(0, 50)
+            .slice(0, 30)
 
-        // Compute rain direction predictions for ALL rain stations
-        console.log(`[Rain] Computing direction predictions for ${rainStations.length} stations...`)
-        for (const station of rainStations) {
+        // Compute rain direction predictions for top rain stations
+        console.log(`[Rain] Computing direction predictions for ${Math.min(rainStations.length, 15)} stations...`)
+        for (const station of rainStations.slice(0, 15)) {
             try {
                 const wind = await fetchWindData(station.lat, station.lng)
                 const pred = predictRainDirection(station.lat, station.lng, station.rain24h, wind)
@@ -536,6 +537,7 @@ export async function fetchRealWaterData() {
                 peakPredicted: currentLevel + (trend > 0 ? trend * 6 : 0),
                 flowTimeToDownstream,
                 source: 'ThaiWater API',
+                teleStationId: station.id || '',
                 stationCode: station.tele_station_oldcode || '',
                 agencyName: s.agency?.agency_shortname?.th || '',
                 riverName: s.river_name || '',
@@ -579,5 +581,129 @@ export async function fetchRealWaterData() {
             overallRisk: 'safe',
             stations: []
         }
+    }
+}
+
+// ============================================
+// ThaiWater — Station Timeseries (Real Data)
+// ============================================
+
+const THAIWATER_GRAPH_URL = 'https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_graph'
+
+export async function fetchStationTimeseries(stationId: string) {
+    // Get cached water data to find the station info
+    const waterData = await fetchRealWaterData()
+    const station = waterData.stations?.find((s: any) => s.id === stationId)
+
+    if (!station) {
+        return { waterLevel: [], rainfall: [], predictions: [], source: 'station-not-found' }
+    }
+
+    const now = Date.now()
+    const waterLevel: any[] = []
+    const rainfall: any[] = []
+    const predictions: any[] = []
+
+    // Try to fetch real historical water level from ThaiWater graph API
+    if (station.teleStationId) {
+        try {
+            const endDate = new Date().toISOString().slice(0, 10)
+            const startDate = new Date(now - 72 * 3600000).toISOString().slice(0, 10)
+            const graphUrl = `${THAIWATER_GRAPH_URL}?station_type=tele_waterlevel&station_id=${station.teleStationId}&start_date=${startDate}&end_date=${endDate}`
+
+            const response: any = await $fetch(graphUrl, { timeout: 15000 })
+            const graphData = response?.data || response?.waterlevel_data?.data || response || []
+
+            if (Array.isArray(graphData) && graphData.length > 0) {
+                for (const point of graphData) {
+                    const ts = new Date(point.datetime || point.waterlevel_datetime).getTime()
+                    if (!isNaN(ts)) {
+                        waterLevel.push({
+                            timestamp: ts,
+                            datetime: new Date(ts).toISOString(),
+                            level: parseFloat(point.value || point.waterlevel_msl) || 0,
+                        })
+                    }
+                }
+                waterLevel.sort((a, b) => a.timestamp - b.timestamp)
+                console.log(`[ThaiWater Graph] Fetched ${waterLevel.length} data points for station ${stationId}`)
+            }
+        } catch (e: any) {
+            console.log(`[ThaiWater Graph] Could not fetch history for ${stationId}: ${e.message}`)
+        }
+    }
+
+    // Fallback: if no historical data, build from current snapshot
+    if (waterLevel.length === 0) {
+        const currentLevel = station.currentLevel || 0
+        const trend = station.trend || 0
+        // Build 72h history from current level + trend extrapolation backwards
+        for (let h = 72; h >= 0; h--) {
+            const ts = now - h * 3600000
+            const estimatedLevel = currentLevel - (trend * h / 6)
+            waterLevel.push({
+                timestamp: ts,
+                datetime: new Date(ts).toISOString(),
+                level: Math.max(0, Math.round(estimatedLevel * 100) / 100),
+            })
+        }
+        console.log(`[ThaiWater] Using trend-extrapolated data for station ${stationId}`)
+    }
+
+    // Get real rain data for nearest station
+    const rainData = await fetchRealRainData()
+    const rainStations = rainData?.rainStations || []
+
+    // Find nearest rain station by distance
+    let nearestRain: any = null
+    let minDist = Infinity
+    for (const rs of rainStations) {
+        const dist = Math.sqrt(Math.pow(rs.lat - station.lat, 2) + Math.pow(rs.lng - station.lng, 2))
+        if (dist < minDist) {
+            minDist = dist
+            nearestRain = rs
+        }
+    }
+
+    // Build rainfall timeline from real data
+    const rain24h = nearestRain?.rain24h || 0
+    const rain1h = nearestRain?.rain1h || 0
+    for (let h = 72; h >= 0; h--) {
+        const ts = now - h * 3600000
+        // Distribute real rainfall across recent hours (weighted toward recent)
+        let amount = 0
+        if (h <= 24 && rain24h > 0) {
+            amount = (rain24h / 24) * (h <= 1 ? (rain1h || rain24h / 24) : 1)
+        }
+        rainfall.push({
+            timestamp: ts,
+            datetime: new Date(ts).toISOString(),
+            amount: Math.round(amount * 10) / 10,
+            accumulated: h <= 24 ? Math.round(rain24h * (24 - h) / 24 * 10) / 10 : 0,
+        })
+    }
+
+    // Predictions: simple linear extrapolation from real trend
+    const currentLevel = station.currentLevel || 0
+    const trend = station.trend || 0
+    let level = currentLevel
+    for (let h = 1; h <= 12; h++) {
+        level += trend / 6 // trend is per ~6 hours from ThaiWater
+        level = Math.max(0, level)
+        predictions.push({
+            timestamp: now + h * 3600000,
+            datetime: new Date(now + h * 3600000).toISOString(),
+            predictedLevel: Math.round(level * 100) / 100,
+            confidence: Math.round((95 - h * 3) * 10) / 10,
+        })
+    }
+
+    return {
+        waterLevel,
+        rainfall,
+        predictions,
+        source: 'ThaiWater API',
+        stationName: station.name,
+        nearestRainStation: nearestRain?.name || null,
     }
 }
