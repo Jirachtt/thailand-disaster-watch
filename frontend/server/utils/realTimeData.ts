@@ -1,6 +1,7 @@
 // Real-time data fetching from NASA FIRMS and ThaiWater APIs
 
 import { predictFireSpread, predictRainDirection, degToCompass } from './fireSpreadModel'
+import { getDashboardSummary, getFireSummary } from './mockData'
 
 // ============================================
 // OpenWeatherMap — Wind/Weather Data
@@ -16,21 +17,43 @@ export async function fetchWindData(lat: number, lng: number) {
 
     const config = useRuntimeConfig()
     const apiKey = config.openweatherApiKey
-    if (!apiKey) return { speed: 5, deg: 90, humidity: 60, temp: 30 } // defaults
+
+    if (apiKey) {
+        try {
+            const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&appid=${apiKey}&units=metric`
+            const res: any = await $fetch(url, { timeout: 4000, retry: 0 })
+            const wind = {
+                speed: Number(res.wind?.speed) || 0,
+                deg: Number(res.wind?.deg) || 0,
+                humidity: Number(res.main?.humidity) || 50,
+                temp: Number(res.main?.temp) || 25,
+                source: 'OpenWeather',
+            }
+            windCache[cacheKey] = { data: wind, ts: Date.now() }
+            return wind
+        } catch {
+            // Continue to the keyless Open-Meteo fallback below.
+        }
+    }
 
     try {
-        const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lng}&appid=${apiKey}&units=metric`
-        const res: any = await $fetch(url, { timeout: 5000 })
+        const url = 'https://api.open-meteo.com/v1/forecast'
+            + `?latitude=${lat}&longitude=${lng}`
+            + '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m'
+            + '&wind_speed_unit=ms&timezone=Asia%2FBangkok'
+        const res: any = await $fetch(url, { timeout: 4000, retry: 0 })
+        const current = res?.current || {}
         const wind = {
-            speed: res.wind?.speed || 0,
-            deg: res.wind?.deg || 0,
-            humidity: res.main?.humidity || 50,
-            temp: res.main?.temp || 25,
+            speed: Number(current.wind_speed_10m) || 0,
+            deg: Number(current.wind_direction_10m) || 0,
+            humidity: Number(current.relative_humidity_2m) || 50,
+            temp: Number(current.temperature_2m) || 25,
+            source: 'Open-Meteo',
         }
         windCache[cacheKey] = { data: wind, ts: Date.now() }
         return wind
     } catch {
-        return { speed: 5, deg: 90, humidity: 60, temp: 30 }
+        return { speed: 3, deg: 90, humidity: 60, temp: 30, source: 'fallback' }
     }
 }
 
@@ -44,6 +67,7 @@ interface CacheEntry<T> {
 
 const cache: Record<string, CacheEntry<any>> = {}
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes (more real-time)
+const inFlight = new Map<string, Promise<any>>()
 
 function getCached<T>(key: string): T | null {
     const entry = cache[key]
@@ -55,6 +79,15 @@ function getCached<T>(key: string): T | null {
 
 function setCache<T>(key: string, data: T): void {
     cache[key] = { data, timestamp: Date.now() }
+}
+
+async function singleFlight<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const existing = inFlight.get(key)
+    if (existing) return existing as Promise<T>
+
+    const promise = task().finally(() => inFlight.delete(key))
+    inFlight.set(key, promise)
+    return promise
 }
 
 // ============================================
@@ -194,7 +227,43 @@ function generateFireSpreadPrediction(fire: any) {
     return predictions
 }
 
-export async function fetchRealFireData() {
+function getFallbackFireDashboard(reason: string) {
+    const summary: any = getFireSummary()
+    const fires = (summary.fires || []).map((fire: any) => ({
+        ...fire,
+        frp: fire.frp || Math.round((fire.intensityLevel || 1) * 18.5 * 10) / 10,
+        source: 'ข้อมูลตัวอย่างออฟไลน์',
+        isFallback: true,
+    }))
+    const spreadPredictions = fires
+        .filter((fire: any) => fire.status === 'active')
+        .map((fire: any) => predictFireSpread(
+            fire,
+            fire.id,
+            {
+                speed: Math.max(0, Number(fire.windSpeed) || 0) / 3.6,
+                deg: Number(fire.windDirectionDeg) || 0,
+                humidity: Number(fire.humidity) || 50,
+                temp: Number(fire.temperature) || 30,
+            },
+        ))
+
+    return {
+        ...summary,
+        timestamp: new Date().toISOString(),
+        source: 'ข้อมูลตัวอย่างออฟไลน์',
+        dataDelay: `${reason} — ข้อมูลนี้ใช้สาธิตการทำงานของแบบจำลอง ไม่ใช่เหตุการณ์ปัจจุบัน`,
+        dataRange: 'ตัวอย่างระบบ',
+        status: 'fallback',
+        isFallback: true,
+        worldCount: 0,
+        worldFires: [],
+        fires,
+        spreadPredictions,
+    }
+}
+
+async function fetchRealFireDataInternal() {
     const cached = getCached<any>('fires')
     if (cached) return cached
 
@@ -203,36 +272,24 @@ export async function fetchRealFireData() {
 
     if (!firmsKey) {
         console.log('[FIRMS] No API key set. Set FIRMS_MAP_KEY env var.')
-        return {
-            timestamp: new Date().toISOString(),
-            source: 'NASA FIRMS',
-            dataDelay: 'NRT',
-            dataRange: '24h',
-            activeCount: 0,
-            totalCount: 0,
-            worldCount: 0,
-            overallFireRisk: 'low',
-            fires: [],
-            worldFires: [],
-            spreadPredictions: []
-        }
+        return getFallbackFireDashboard('ยังไม่ได้ตั้งค่า FIRMS_MAP_KEY')
     }
 
     try {
         // Fetch Thailand fires (primary)
         const thaiUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/${CM_BBOX}/1`
-        const worldUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/world/1`
-
-        // Fetch concurrently, but allow world to fail gracefully without breaking Thai data
-        const [thaiResponse, worldResponse] = await Promise.all([
-            $fetch<string>(thaiUrl, { responseType: 'text', timeout: 15000 }).catch(() => ''),
-            $fetch<string>(worldUrl, { responseType: 'text', timeout: 30000 }).catch(() => ''),
-        ])
+        // Thailand is the only dataset in the critical path. A one-day global
+        // VIIRS response can contain 100k+ rows and previously made the O(n²)
+        // clustering pass freeze the dashboard.
+        const thaiResponse = await $fetch<string>(thaiUrl, {
+            responseType: 'text',
+            timeout: 8000,
+            retry: 0,
+        })
 
         const thaiRecords = parseFirmsCsv(thaiResponse)
-        const worldRecords = parseFirmsCsv(worldResponse)
 
-        console.log(`[FIRMS] Thailand: ${thaiRecords.length} hotspots, World: ${worldRecords.length} hotspots`)
+        console.log(`[FIRMS] Thailand: ${thaiRecords.length} hotspots`)
 
         // Process Thailand fires (for alert bar, stats, spread predictions)
         const processRecords = (records: FirmsRecord[]) => {
@@ -301,9 +358,9 @@ export async function fetchRealFireData() {
         await Promise.all(windFetchFires.map(async (fire) => {
             try {
                 const wind = await fetchWindData(fire.lat, fire.lng)
-                fire.windSpeed = wind.speed
-                fire.windDirection = degToCompass(wind.deg)
-                fire.windDirectionDeg = wind.deg
+                fire.windSpeed = Math.round(wind.speed * 3.6 * 10) / 10
+                fire.windDirectionDeg = (wind.deg + 180) % 360
+                fire.windDirection = degToCompass(fire.windDirectionDeg)
                 fire.humidity = wind.humidity
                 fire.temperature = wind.temp
                 // Regenerate predictions with real wind data
@@ -316,17 +373,6 @@ export async function fetchRealFireData() {
                 }
             } catch (e) { /* keep defaults */ }
         }))
-
-        // Process World fires, but ONLY keep the top 20 most intense to avoid frontend lag
-        // Also exclude fires that are already inside the Thai bounding box to avoid duplicates
-        const worldFiresAll = processRecords(worldRecords)
-        const thaiBbox = { minLat: 5.6, maxLat: 20.5, minLng: 97.3, maxLng: 105.7 }
-
-        const topWorldFires = worldFiresAll
-            .filter(f => !(f.lat >= thaiBbox.minLat && f.lat <= thaiBbox.maxLat && f.lng >= thaiBbox.minLng && f.lng <= thaiBbox.maxLng))
-            .slice(0, 20)
-
-        console.log(`[FIRMS] Filtered World fires to top ${topWorldFires.length} extreme clusters`)
 
         // Spread predictions (CA + Wind model) — use Thai fires with real wind
         const spreadPredictions: any[] = []
@@ -350,12 +396,14 @@ export async function fetchRealFireData() {
             source: 'NASA FIRMS (VIIRS SNPP)',
             dataDelay: 'Near Real-Time (NRT) — ข้อมูลจากดาวเทียม ล่าช้าประมาณ 2–3 ชั่วโมง',
             dataRange: 'ย้อนหลัง 24 ชั่วโมง',
+            status: 'live',
+            isFallback: false,
             activeCount,
             totalCount: thaiFires.length,
-            worldCount: worldFiresAll.length,
+            worldCount: 0,
             overallFireRisk,
             fires: thaiFires,
-            worldFires: topWorldFires,
+            worldFires: [],
             spreadPredictions,
         }
 
@@ -363,20 +411,12 @@ export async function fetchRealFireData() {
         return result
     } catch (error: any) {
         console.error('[FIRMS] API error:', error.message)
-        return {
-            timestamp: new Date().toISOString(),
-            source: 'NASA FIRMS (Error)',
-            dataDelay: 'API Unavailable',
-            dataRange: 'N/A',
-            activeCount: 0,
-            totalCount: 0,
-            worldCount: 0,
-            overallFireRisk: 'low',
-            fires: [],
-            worldFires: [],
-            spreadPredictions: []
-        }
+        return getFallbackFireDashboard('เชื่อมต่อ NASA FIRMS ไม่สำเร็จ')
     }
+}
+
+export async function fetchRealFireData() {
+    return singleFlight('fires', fetchRealFireDataInternal)
 }
 
 // ============================================
@@ -385,19 +425,54 @@ export async function fetchRealFireData() {
 
 const THAIWATER_RAIN_URL = 'https://api-v3.thaiwater.net/api/v1/thaiwater30/public/rain_24h'
 
-export async function fetchRealRainData() {
+function getFallbackRainDashboard(reason: string) {
+    const samples = [
+        { name: 'อ.เมืองเชียงใหม่', province: 'เชียงใหม่', amphoe: 'เมืองเชียงใหม่', lat: 18.7883, lng: 98.9853, rain24h: 18.4, rain1h: 1.2 },
+        { name: 'อ.แม่แตง', province: 'เชียงใหม่', amphoe: 'แม่แตง', lat: 19.1175, lng: 98.9331, rain24h: 24.8, rain1h: 2.1 },
+        { name: 'อ.เชียงดาว', province: 'เชียงใหม่', amphoe: 'เชียงดาว', lat: 19.3654, lng: 98.9644, rain24h: 31.2, rain1h: 3.4 },
+        { name: 'อ.เมืองเชียงราย', province: 'เชียงราย', amphoe: 'เมืองเชียงราย', lat: 19.9105, lng: 99.8406, rain24h: 15.7, rain1h: 0.8 },
+        { name: 'อ.เมืองลำปาง', province: 'ลำปาง', amphoe: 'เมืองลำปาง', lat: 18.2888, lng: 99.4909, rain24h: 12.1, rain1h: 0.4 },
+    ]
+    const wind = { speed: 3, deg: 110, humidity: 70, temp: 28 }
+    const rainStations = samples.map((station) => {
+        const prediction = predictRainDirection(station.lat, station.lng, station.rain24h, wind)
+        return {
+            ...station,
+            rainToday: station.rain24h,
+            datetime: new Date().toISOString(),
+            intensity: station.rain24h >= 35 ? 'heavy' : station.rain24h >= 10 ? 'moderate' : 'light',
+            windSpeed: Math.round(wind.speed * 3.6 * 10) / 10,
+            windDeg: wind.deg,
+            rainDirection: prediction.directionLabel,
+            rainDirectionDeg: prediction.directionDeg,
+            predictedPath: prediction.predictedPath,
+        }
+    })
+
+    return {
+        timestamp: new Date().toISOString(),
+        source: 'ข้อมูลตัวอย่างออฟไลน์',
+        dataDelay: `${reason} — ข้อมูลนี้ใช้สาธิตชั้นข้อมูลฝน ไม่ใช่ค่าตรวจวัดปัจจุบัน`,
+        status: 'fallback',
+        isFallback: true,
+        totalStations: rainStations.length,
+        rainStations,
+    }
+}
+
+async function fetchRealRainDataInternal() {
     const cached = getCached<any>('rain')
     if (cached) return cached
 
     try {
-        const response: any = await $fetch(THAIWATER_RAIN_URL, { timeout: 15000 })
+        const response: any = await $fetch(THAIWATER_RAIN_URL, { timeout: 7000, retry: 0 })
         const allStations = response?.data || response?.rain_data?.data || []
 
         const rainStations = allStations
             .filter((s: any) => s.station?.tele_station_lat && s.rain_24h != null && parseFloat(s.rain_24h) >= 10)
             .map((s: any) => ({
-                lat: s.station.tele_station_lat,
-                lng: s.station.tele_station_long,
+                lat: parseFloat(s.station.tele_station_lat),
+                lng: parseFloat(s.station.tele_station_long),
                 name: s.station.tele_station_name?.th || 'สถานี',
                 province: s.geocode?.province_name?.th || '',
                 amphoe: s.geocode?.amphoe_name?.th || '',
@@ -413,24 +488,27 @@ export async function fetchRealRainData() {
             .sort((a: any, b: any) => b.rain24h - a.rain24h)
             .slice(0, 30)
 
-        // Compute rain direction predictions for top rain stations
-        console.log(`[Rain] Computing direction predictions for ${Math.min(rainStations.length, 15)} stations...`)
-        for (const station of rainStations.slice(0, 15)) {
+        // Fetch all wind snapshots concurrently. The old sequential loop could
+        // hold this request for up to 75 seconds when the weather API was slow.
+        console.log(`[Rain] Computing direction predictions for ${Math.min(rainStations.length, 12)} stations...`)
+        await Promise.all(rainStations.slice(0, 12).map(async (station: any) => {
             try {
                 const wind = await fetchWindData(station.lat, station.lng)
                 const pred = predictRainDirection(station.lat, station.lng, station.rain24h, wind)
-                station.windSpeed = wind.speed
+                station.windSpeed = Math.round(wind.speed * 3.6 * 10) / 10
                 station.windDeg = wind.deg
                 station.rainDirection = pred.directionLabel
                 station.rainDirectionDeg = pred.directionDeg
                 station.predictedPath = pred.predictedPath
             } catch (e) { /* skip */ }
-        }
+        }))
 
         const result = {
             timestamp: new Date().toISOString(),
             source: 'ThaiWater API (HII)',
             dataDelay: 'Real-time — ข้อมูลสดจากสถานีวัดฝนทั่วประเทศ',
+            status: 'live',
+            isFallback: false,
             totalStations: rainStations.length,
             rainStations,
         }
@@ -439,8 +517,12 @@ export async function fetchRealRainData() {
         return result
     } catch (error: any) {
         console.error('[ThaiWater Rain] API error:', error.message)
-        return { timestamp: new Date().toISOString(), source: 'unavailable', totalStations: 0, rainStations: [] }
+        return getFallbackRainDashboard('เชื่อมต่อ ThaiWater ไม่สำเร็จ')
     }
+}
+
+export async function fetchRealRainData() {
+    return singleFlight('rain', fetchRealRainDataInternal)
 }
 
 // ============================================
@@ -449,38 +531,63 @@ export async function fetchRealRainData() {
 
 const THAIWATER_URL = 'https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load'
 
-// ThaiWater situation_level mapping
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function mapSituationLevel(level: number): string {
-    // 1=ปกติ, 2=เฝ้าระวัง, 3=วิกฤต, 4=ปลอดภัย(others), 5=ล้นตลิ่ง
-    if (level >= 5) return 'danger'
-    if (level >= 3) return 'warning'
-    return 'safe'
+// ThaiWater scale: 1=น้ำน้อยวิกฤต, 2=น้ำน้อย, 3=ปกติ,
+// 4=น้ำมาก, 5=ล้นตลิ่ง. This is not an ordinal risk scale.
+function getWaterSituation(level: number) {
+    switch (level) {
+        case 1: return { riskLevel: 'danger', riskType: 'drought', situationLabel: 'น้ำน้อยวิกฤต', priority: 3 }
+        case 2: return { riskLevel: 'warning', riskType: 'drought', situationLabel: 'น้ำน้อย', priority: 2 }
+        case 4: return { riskLevel: 'warning', riskType: 'flood', situationLabel: 'น้ำมาก', priority: 4 }
+        case 5: return { riskLevel: 'danger', riskType: 'flood', situationLabel: 'ล้นตลิ่ง', priority: 5 }
+        default: return { riskLevel: 'safe', riskType: 'normal', situationLabel: 'ปกติ', priority: 1 }
+    }
 }
 
-export async function fetchRealWaterData() {
+function getFallbackWaterDashboard(reason: string) {
+    const summary: any = getDashboardSummary()
+    const stations = (summary.stations || []).map((station: any) => ({
+        ...station,
+        situationLevel: station.riskLevel === 'danger' ? 5 : station.riskLevel === 'warning' ? 4 : 3,
+        situationLabel: station.riskLevel === 'danger' ? 'ล้นตลิ่ง' : station.riskLevel === 'warning' ? 'น้ำมาก' : 'ปกติ',
+        riskType: station.riskLevel === 'safe' ? 'normal' : 'flood',
+        peakInHours: station.trend > 0 ? 6 : 0,
+        forecastConfidence: 82,
+        source: 'ข้อมูลตัวอย่างออฟไลน์',
+        isFallback: true,
+    }))
+
+    return {
+        ...summary,
+        timestamp: new Date().toISOString(),
+        source: 'ข้อมูลตัวอย่างออฟไลน์',
+        dataDelay: `${reason} — ข้อมูลนี้ใช้สาธิตระบบ ไม่ใช่ค่าตรวจวัดปัจจุบัน`,
+        status: 'fallback',
+        isFallback: true,
+        stations,
+    }
+}
+
+async function fetchRealWaterDataInternal() {
     const cached = getCached<any>('water')
     if (cached) return cached
 
     try {
-        const response: any = await $fetch(THAIWATER_URL, { timeout: 15000 })
+        const response: any = await $fetch(THAIWATER_URL, { timeout: 7000, retry: 0 })
         const allStations = response?.waterlevel_data?.data || []
 
-        // Use all stations nationwide — take the most critical ones
-        // Sort by situation level (most critical first)
+        // Use all stations nationwide and rank by explicit risk priority. The
+        // situation code is categorical, so numeric descending order is wrong.
         const sortedStations = allStations
-            .filter((s: any) => s.station?.tele_station_lat && s.waterlevel_msl)
-            .sort((a: any, b: any) => (b.situation_level || 0) - (a.situation_level || 0))
+            .filter((s: any) => s.station?.tele_station_lat && s.waterlevel_msl != null)
+            .sort((a: any, b: any) => {
+                const aPriority = getWaterSituation(Number(a.situation_level) || 3).priority
+                const bPriority = getWaterSituation(Number(b.situation_level) || 3).priority
+                return bPriority - aPriority
+            })
 
         if (sortedStations.length === 0) {
             console.log('[ThaiWater] No stations found in response.')
-            return {
-                timestamp: new Date().toISOString(),
-                source: 'ThaiWater API (No Data)',
-                dataDelay: 'API Unavailable',
-                overallRisk: 'safe',
-                stations: []
-            }
+            return getFallbackWaterDashboard('ThaiWater ไม่ส่งข้อมูลสถานีกลับมา')
         }
 
         // Take top 50 most critical stations
@@ -494,47 +601,46 @@ export async function fetchRealWaterData() {
             const trend = Math.round((currentLevel - prevLevel) * 100) / 100
 
             // Determine type based on position (upstream/midstream/downstream by latitude)
-            const lat = station.tele_station_lat || 18.78
+            const lat = parseFloat(station.tele_station_lat) || 18.78
             let type = 'midstream'
             let typeLabel = 'กลางน้ำ'
             if (lat > 18.9) { type = 'upstream'; typeLabel = 'ต้นน้ำ' }
             else if (lat < 18.7) { type = 'downstream'; typeLabel = 'ปลายน้ำ' }
 
-            // ใช้ situation_level จาก ThaiWater API โดยตรง (Real-time เท่านั้น)
-            // 1=ปกติ, 2=เฝ้าระวัง, 3=วิกฤต, 4=ปลอดภัย(others), 5=ล้นตลิ่ง
-            const situationLevel = s.situation_level || 0
-
-            const minBank = station.min_bank || 999
-
-            let riskLevel = 'safe'
-            if (situationLevel >= 5) riskLevel = 'danger'       // ล้นตลิ่ง — วิกฤตจริง
-            else if (situationLevel >= 3) riskLevel = 'critical' // วิกฤต — เฝ้าระวังสูง
-            else if (situationLevel >= 2) riskLevel = 'warning'  // เฝ้าระวัง
-            // ไม่ใช้ threshold ที่ประมาณเอง — ใช้เฉพาะข้อมูล real-time จาก API
+            const situationLevel = Number(s.situation_level) || 3
+            const situation = getWaterSituation(situationLevel)
+            const parsedBank = parseFloat(station.min_bank)
+            const minBank = Number.isFinite(parsedBank) ? parsedBank : null
 
             const flowTimeToDownstream = type === 'upstream' ? 6 : type === 'midstream' ? 3 : 0
 
             return {
-                id: `S${(idx + 1).toString().padStart(3, '0')}`,
+                id: station.id ? `TW-${station.id}` : `TW-${station.tele_station_oldcode || idx + 1}`,
                 name: station.tele_station_name?.th || `สถานี ${station.tele_station_oldcode || idx + 1}`,
                 nameEn: station.tele_station_name?.en || station.tele_station_oldcode || `Station ${idx + 1}`,
                 type,
                 typeLabel,
                 lat: station.tele_station_lat || 18.78,
-                lng: station.tele_station_long || 98.99,
+                lng: parseFloat(station.tele_station_long) || 98.99,
                 elevation: 0,
                 description: `${geocode.amphoe_name?.th || ''} ${geocode.province_name?.th || 'เชียงใหม่'}`,
-                thresholds: { warning: minBank * 0.8, critical: minBank * 0.95 },
+                thresholds: minBank
+                    ? { warning: minBank * 0.8, critical: minBank * 0.95 }
+                    : { warning: null, critical: null },
                 currentLevel,
                 situationLevel,
+                situationLabel: situation.situationLabel,
                 trend,
                 trendDirection: trend > 0.05 ? 'up' : trend < -0.05 ? 'down' : 'stable',
                 rainfall: {
                     current: 0,
                     accumulated24h: 0,
                 },
-                riskLevel,
+                riskLevel: situation.riskLevel,
+                riskType: situation.riskType,
                 peakPredicted: currentLevel + (trend > 0 ? trend * 6 : 0),
+                peakInHours: trend > 0 ? 6 : 0,
+                forecastConfidence: Math.max(65, 92 - Math.abs(trend) * 20),
                 flowTimeToDownstream,
                 source: 'ThaiWater API',
                 teleStationId: station.id || '',
@@ -551,14 +657,12 @@ export async function fetchRealWaterData() {
 
         // Overall risk — ใช้เฉพาะ situation_level จาก API เท่านั้น
         const dangerCount = stations.filter((s: any) => s.riskLevel === 'danger').length
-        const criticalCount = stations.filter((s: any) => s.riskLevel === 'critical').length
         const warningCount = stations.filter((s: any) => s.riskLevel === 'warning').length
-        console.log(`[ThaiWater] Risk summary — danger(ล้นตลิ่ง): ${dangerCount}, critical(วิกฤต): ${criticalCount}, warning(เฝ้าระวัง): ${warningCount}, total: ${stations.length}`)
+        console.log(`[ThaiWater] Risk summary — danger: ${dangerCount}, warning: ${warningCount}, total: ${stations.length}`)
 
-        // วิกฤตจริง = มีสถานีที่ situation_level >= 5 (ล้นตลิ่ง) เท่านั้น
         const overallRisk = dangerCount > 0
             ? 'danger'
-            : (criticalCount > 0 || warningCount > 0)
+            : warningCount > 0
                 ? 'warning'
                 : 'safe'
 
@@ -566,6 +670,8 @@ export async function fetchRealWaterData() {
             timestamp: new Date().toISOString(),
             source: 'ThaiWater API (HII/RID)',
             dataDelay: 'Real-time — ข้อมูลสดจากเซ็นเซอร์วัดระดับน้ำทั่วประเทศ',
+            status: 'live',
+            isFallback: false,
             overallRisk,
             stations,
         }
@@ -574,35 +680,45 @@ export async function fetchRealWaterData() {
         return result
     } catch (error: any) {
         console.error('[ThaiWater] API error:', error.message)
-        return {
-            timestamp: new Date().toISOString(),
-            source: 'ThaiWater API (Error)',
-            dataDelay: 'API Unavailable',
-            overallRisk: 'safe',
-            stations: []
-        }
+        return getFallbackWaterDashboard('เชื่อมต่อ ThaiWater ไม่สำเร็จ')
     }
 }
 
+export async function fetchRealWaterData() {
+    return singleFlight('water', fetchRealWaterDataInternal)
+}
+
 // ============================================
-// ThaiWater — Station Timeseries (Real Data)
+// ThaiWater — Station Timeseries (measured history or explicit estimate)
 // ============================================
 
 const THAIWATER_GRAPH_URL = 'https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_graph'
 
 export async function fetchStationTimeseries(stationId: string) {
+    const timeseriesCacheKey = `timeseries:${stationId}`
+    const cached = getCached<any>(timeseriesCacheKey)
+    if (cached) return cached
+
     // Get cached water data to find the station info
     const waterData = await fetchRealWaterData()
     const station = waterData.stations?.find((s: any) => s.id === stationId)
 
     if (!station) {
-        return { waterLevel: [], rainfall: [], predictions: [], source: 'station-not-found' }
+        return {
+            waterLevel: [],
+            rainfall: [],
+            predictions: [],
+            source: 'station-not-found',
+            status: 'error',
+            estimatedHistory: false,
+        }
     }
 
     const now = Date.now()
     const waterLevel: any[] = []
     const rainfall: any[] = []
     const predictions: any[] = []
+    let estimatedHistory = false
 
     // Try to fetch real historical water level from ThaiWater graph API
     if (station.teleStationId) {
@@ -611,20 +727,30 @@ export async function fetchStationTimeseries(stationId: string) {
             const startDate = new Date(now - 72 * 3600000).toISOString().slice(0, 10)
             const graphUrl = `${THAIWATER_GRAPH_URL}?station_type=tele_waterlevel&station_id=${station.teleStationId}&start_date=${startDate}&end_date=${endDate}`
 
-            const response: any = await $fetch(graphUrl, { timeout: 15000 })
-            const graphData = response?.data || response?.waterlevel_data?.data || response || []
+            const response: any = await $fetch(graphUrl, { timeout: 8000, retry: 0 })
+            const graphData = response?.data?.graph_data
+                || response?.waterlevel_data?.data
+                || (Array.isArray(response?.data) ? response.data : [])
 
             if (Array.isArray(graphData) && graphData.length > 0) {
+                const hourlyPoints = new Map<string, any>()
                 for (const point of graphData) {
-                    const ts = new Date(point.datetime || point.waterlevel_datetime).getTime()
-                    if (!isNaN(ts)) {
-                        waterLevel.push({
+                    const rawDatetime = point.datetime || point.waterlevel_datetime
+                    const normalizedDatetime = typeof rawDatetime === 'string' && !/[zZ]|[+-]\d\d:\d\d$/.test(rawDatetime)
+                        ? `${rawDatetime.replace(' ', 'T')}+07:00`
+                        : rawDatetime
+                    const ts = new Date(normalizedDatetime).getTime()
+                    const parsedLevel = parseFloat(point.value ?? point.waterlevel_msl)
+                    if (!isNaN(ts) && Number.isFinite(parsedLevel)) {
+                        const hourKey = new Date(ts).toISOString().slice(0, 13)
+                        hourlyPoints.set(hourKey, {
                             timestamp: ts,
                             datetime: new Date(ts).toISOString(),
-                            level: parseFloat(point.value || point.waterlevel_msl) || 0,
+                            level: parsedLevel,
                         })
                     }
                 }
+                waterLevel.push(...hourlyPoints.values())
                 waterLevel.sort((a, b) => a.timestamp - b.timestamp)
                 console.log(`[ThaiWater Graph] Fetched ${waterLevel.length} data points for station ${stationId}`)
             }
@@ -635,6 +761,7 @@ export async function fetchStationTimeseries(stationId: string) {
 
     // Fallback: if no historical data, build from current snapshot
     if (waterLevel.length === 0) {
+        estimatedHistory = true
         const currentLevel = station.currentLevel || 0
         const trend = station.trend || 0
         // Build 72h history from current level + trend extrapolation backwards
@@ -683,12 +810,15 @@ export async function fetchStationTimeseries(stationId: string) {
         })
     }
 
-    // Predictions: simple linear extrapolation from real trend
+    // Trend model with decay and a small rain contribution. This is a
+    // deterministic short-horizon estimate, not a random "AI" value.
     const currentLevel = station.currentLevel || 0
     const trend = station.trend || 0
     let level = currentLevel
     for (let h = 1; h <= 12; h++) {
-        level += trend / 6 // trend is per ~6 hours from ThaiWater
+        const trendContribution = (trend / 6) * Math.exp(-h / 10)
+        const rainContribution = Math.min(0.025, rain24h / 4000) * Math.exp(-h / 8)
+        level += trendContribution + rainContribution
         level = Math.max(0, level)
         predictions.push({
             timestamp: now + h * 3600000,
@@ -698,12 +828,25 @@ export async function fetchStationTimeseries(stationId: string) {
         })
     }
 
-    return {
+    const result = {
         waterLevel,
         rainfall,
         predictions,
-        source: 'ThaiWater API',
+        source: estimatedHistory
+            ? (waterData.isFallback
+                ? 'ข้อมูลตัวอย่างออฟไลน์ — ประเมินย้อนหลังจากค่าปัจจุบันและแนวโน้ม'
+                : 'ThaiWater API — ประเมินย้อนหลังจากค่าปัจจุบันและแนวโน้ม')
+            : 'ThaiWater API (waterlevel_graph)',
+        status: estimatedHistory ? 'estimated' : 'live',
+        estimatedHistory,
+        // ThaiWater exposes a rain snapshot/accumulation here, not an hourly
+        // history. The chart bars are therefore an explicit estimate.
+        estimatedRainfallTimeline: true,
+        rainfallSourceStatus: rainData?.status || (rainData?.isFallback ? 'fallback' : 'live'),
+        isFallback: Boolean(waterData.isFallback),
         stationName: station.name,
         nearestRainStation: nearestRain?.name || null,
     }
+    setCache(timeseriesCacheKey, result)
+    return result
 }

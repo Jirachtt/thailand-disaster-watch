@@ -1,26 +1,79 @@
 <template>
-  <div class="glass-card">
-    <div class="card-header">
-      <div class="card-title">
-        <span class="material-symbols-rounded">show_chart</span>
-        กราฟระดับน้ำ — {{ activeStationName }}
+  <section class="glass-card water-chart-card" aria-labelledby="water-chart-title">
+    <div class="card-header chart-card-header">
+      <div>
+        <h3 id="water-chart-title" class="card-title">
+          <span class="material-symbols-rounded" aria-hidden="true">show_chart</span>
+          ระดับน้ำและแนวโน้ม — {{ activeStationName }}
+        </h3>
+        <p class="card-subtitle">{{ historySubtitle }}</p>
+        <div v-if="tsData" class="history-provenance" role="status">
+          <span class="history-badge" :class="historyBadge.className">{{ historyBadge.label }}</span>
+          <span class="history-source">{{ tsData.source }}</span>
+        </div>
       </div>
-      <div class="chart-tabs">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          class="chart-tab"
-          :class="{ active: activeTab === tab.id }"
-          @click="activeTab = tab.id"
-        >
-          {{ tab.label }}
+      <div class="chart-actions">
+        <div class="chart-tabs" role="group" aria-label="เลือกช่วงเวลาย้อนหลัง">
+          <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            type="button"
+            class="chart-tab"
+            :class="{ active: activeTab === tab.id }"
+            :aria-pressed="activeTab === tab.id"
+            @click="activeTab = tab.id"
+          >{{ tab.label }}</button>
+        </div>
+        <button type="button" class="icon-action" aria-label="โหลดกราฟใหม่" :disabled="pending" @click="refresh">
+          <span class="material-symbols-rounded" :class="{ spinning: pending }" aria-hidden="true">refresh</span>
         </button>
       </div>
     </div>
-    <div class="chart-wrapper">
-      <canvas ref="chartCanvas"></canvas>
+
+    <div v-if="pending && !tsData" class="chart-loading" aria-label="กำลังโหลดกราฟระดับน้ำ">
+      <div class="skeleton-line wide"></div>
+      <div class="skeleton-chart"></div>
     </div>
-  </div>
+    <div v-else-if="error && !tsData" class="module-empty compact">
+      <span class="material-symbols-rounded" aria-hidden="true">sync_problem</span>
+      <p>โหลดข้อมูลย้อนหลังไม่สำเร็จ</p>
+      <button type="button" class="secondary-btn" @click="refresh">ลองอีกครั้ง</button>
+    </div>
+    <div v-else-if="!hasChartData" class="module-empty compact">
+      <span class="material-symbols-rounded" aria-hidden="true">monitoring</span>
+      <p>ยังไม่มีข้อมูลย้อนหลังของสถานีนี้</p>
+    </div>
+    <template v-else>
+      <div class="chart-wrapper" :class="{ refreshing: pending }">
+        <canvas ref="chartCanvas" role="img" :aria-label="chartSummary">
+          {{ chartSummary }}
+        </canvas>
+        <span v-if="pending" class="inline-refresh-status">กำลังอัปเดต…</span>
+      </div>
+      <div class="chart-footnote">
+        <span><i class="legend-line" :class="{ estimated: isEstimatedHistory }"></i> {{ historyLegendLabel }}</span>
+        <span><i class="legend-line forecast"></i> ค่าคาดการณ์</span>
+        <span><i class="legend-block rain"></i> {{ rainfallLegendLabel }}</span>
+        <span>{{ historyFootnote }}</span>
+      </div>
+      <details class="forecast-table-details">
+        <summary>ดูข้อมูลกราฟแบบตาราง</summary>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>เวลา</th><th>ประเภท</th><th>ระดับน้ำ</th><th>ความเชื่อมั่น</th></tr></thead>
+            <tbody>
+              <tr v-for="row in accessibleRows" :key="`${row.type}-${row.timestamp}`">
+                <td>{{ formatDateTime(row.timestamp) }}</td>
+                <td>{{ row.type }}</td>
+                <td>{{ row.level.toFixed(2) }} ม.</td>
+                <td>{{ row.confidence ? `${row.confidence}%` : '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </template>
+  </section>
 </template>
 
 <script setup>
@@ -29,8 +82,8 @@ import { Chart, registerables } from 'chart.js'
 Chart.register(...registerables)
 
 const props = defineProps({
-  stationId: { type: String, default: 'S002' },
-  stationName: { type: String, default: 'P.1 สะพานนวรัฐ' },
+  stationId: { type: String, default: '' },
+  stationName: { type: String, default: 'สถานีตรวจวัด' },
 })
 
 const activeTab = ref('24h')
@@ -45,197 +98,197 @@ const tabs = [
 
 const activeStationName = computed(() => props.stationName)
 
-const { data: tsData } = await useFetch(() => `/api/dashboard/timeseries/${props.stationId}`)
+const { data: tsData, pending, error, refresh } = useFetch(
+  () => `/api/dashboard/timeseries/${encodeURIComponent(props.stationId)}`,
+  {
+    server: false,
+    lazy: true,
+    watch: [() => props.stationId],
+    timeout: 10000,
+  },
+)
+
+const hasChartData = computed(() => Boolean(tsData.value?.waterLevel?.length))
+const isEstimatedHistory = computed(() => Boolean(tsData.value?.estimatedHistory))
+
+const historyBadge = computed(() => {
+  if (tsData.value?.isFallback) {
+    return { label: 'ข้อมูลสาธิต — ประเมินย้อนหลัง', className: 'demo' }
+  }
+  if (isEstimatedHistory.value) {
+    return { label: 'ค่าประเมินย้อนหลัง', className: 'estimated' }
+  }
+  if (tsData.value?.status === 'live') {
+    return { label: 'ข้อมูลตรวจวัดย้อนหลัง', className: 'live' }
+  }
+  return { label: 'ไม่พบแหล่งข้อมูล', className: 'error' }
+})
+
+const historySubtitle = computed(() => {
+  if (!tsData.value) return 'กำลังตรวจสอบแหล่งข้อมูลย้อนหลังและแบบจำลองล่วงหน้า 12 ชั่วโมง'
+  if (tsData.value.status === 'error') return 'ยังไม่พบข้อมูลย้อนหลังของสถานีนี้'
+  return isEstimatedHistory.value
+    ? 'แนวโน้มย้อนหลังจากค่าล่าสุด และแบบจำลองล่วงหน้า 12 ชั่วโมง'
+    : 'ข้อมูลตรวจวัดย้อนหลัง และแบบจำลองล่วงหน้า 12 ชั่วโมง'
+})
+
+const historyLegendLabel = computed(() => isEstimatedHistory.value ? 'ค่าประเมินย้อนหลัง' : 'ค่าตรวจวัดย้อนหลัง')
+const rainfallLegendLabel = computed(() => tsData.value?.rainfallSourceStatus === 'fallback'
+  ? 'ฝนสาธิต — เฉลี่ยจากยอดสะสม 24 ชม.'
+  : 'ฝนเฉลี่ยจากยอดสะสม 24 ชม.')
+
+const historyFootnote = computed(() => {
+  if (tsData.value?.isFallback) return 'ข้อมูลสาธิตออฟไลน์ ไม่ใช่ค่าตรวจวัดปัจจุบัน'
+  if (isEstimatedHistory.value) return 'เส้นย้อนหลังคำนวณจากค่าล่าสุดและแนวโน้ม ไม่ใช่ค่าตรวจวัดรายชั่วโมง'
+  return 'ความเชื่อมั่นของค่าคาดการณ์ลดลงตามระยะเวลา'
+})
 
 function getFilteredData(hours) {
   if (!tsData.value) return { waterLevel: [], rainfall: [], predictions: [] }
   const cutoff = Date.now() - hours * 3600000
   return {
-    waterLevel: tsData.value.waterLevel.filter((d) => d.timestamp >= cutoff),
-    rainfall: tsData.value.rainfall.filter((d) => d.timestamp >= cutoff),
-    predictions: tsData.value.predictions,
+    waterLevel: (tsData.value.waterLevel || []).filter(item => item.timestamp >= cutoff),
+    rainfall: (tsData.value.rainfall || []).filter(item => item.timestamp >= cutoff),
+    predictions: tsData.value.predictions || [],
   }
 }
 
-function formatTime(ts) {
-  return new Date(ts).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+function getCurrentRange() {
+  const hours = activeTab.value === '12h' ? 12 : activeTab.value === '72h' ? 72 : 24
+  return getFilteredData(hours)
 }
 
+function formatTime(timestamp) {
+  return new Date(timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatDateTime(timestamp) {
+  return new Date(timestamp).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+const accessibleRows = computed(() => {
+  const filtered = getCurrentRange()
+  const actual = filtered.waterLevel.slice(-12).map(item => ({ timestamp: item.timestamp, type: historyLegendLabel.value, level: item.level, confidence: null }))
+  const predictions = filtered.predictions.map(item => ({ timestamp: item.timestamp, type: 'ค่าคาดการณ์', level: item.predictedLevel, confidence: item.confidence }))
+  return [...actual, ...predictions]
+})
+
+const chartSummary = computed(() => {
+  if (!hasChartData.value) return 'ยังไม่มีข้อมูลระดับน้ำ'
+  const values = tsData.value.waterLevel
+  const latest = values.at(-1)?.level
+  const prediction = tsData.value.predictions?.at(-1)?.predictedLevel
+  const historyDescription = isEstimatedHistory.value ? 'ชุดข้อมูลย้อนหลังเป็นค่าประเมิน' : 'ชุดข้อมูลย้อนหลังเป็นค่าตรวจวัด'
+  return `ระดับน้ำล่าสุด ${Number(latest).toFixed(2)} เมตร ${historyDescription} และคาดการณ์ใน 12 ชั่วโมง ${Number(prediction).toFixed(2)} เมตร`
+})
+
 function buildChart() {
-  if (!chartCanvas.value || !tsData.value) return
+  if (!chartCanvas.value || !hasChartData.value) return
 
-  const hours = activeTab.value === '12h' ? 12 : activeTab.value === '24h' ? 24 : 72
-  const filtered = getFilteredData(hours)
+  const filtered = getCurrentRange()
+  const waterLabels = filtered.waterLevel.map(item => formatTime(item.timestamp))
+  const waterValues = filtered.waterLevel.map(item => item.level)
+  const rainfallValues = filtered.rainfall.map(item => item.amount)
+  const predictionLabels = filtered.predictions.map(item => formatTime(item.timestamp))
+  const predictionValues = filtered.predictions.map(item => item.predictedLevel)
 
-  const waterLabels = filtered.waterLevel.map((d) => formatTime(d.timestamp))
-  const waterValues = filtered.waterLevel.map((d) => d.level)
-  const rainfallValues = filtered.rainfall.map((d) => d.amount)
-
-  // Add prediction data
-  const predLabels = filtered.predictions.map((d) => formatTime(d.timestamp))
-  const predValues = filtered.predictions.map((d) => d.predictedLevel)
-
-  const allLabels = [...waterLabels, ...predLabels]
-  const actualWithGap = [...waterValues, ...new Array(predLabels.length).fill(null)]
-  const predWithGap = [...new Array(waterLabels.length - 1).fill(null), waterValues[waterValues.length - 1], ...predValues]
-  const rainWithGap = [...rainfallValues, ...new Array(predLabels.length).fill(null)]
-
+  if (!waterValues.length) return
   if (chartInstance) chartInstance.destroy()
 
-  const ctx = chartCanvas.value.getContext('2d')
+  const context = chartCanvas.value.getContext('2d')
+  const waterGradient = context.createLinearGradient(0, 0, 0, 280)
+  waterGradient.addColorStop(0, 'rgba(3, 105, 161, 0.22)')
+  waterGradient.addColorStop(1, 'rgba(3, 105, 161, 0.01)')
 
-  // Create gradient for actual water level
-  const waterGradient = ctx.createLinearGradient(0, 0, 0, 280)
-  waterGradient.addColorStop(0, 'rgba(14, 165, 233, 0.3)')
-  waterGradient.addColorStop(1, 'rgba(14, 165, 233, 0.01)')
+  const allLabels = [...waterLabels, ...predictionLabels]
+  const actualWithGap = [...waterValues, ...new Array(predictionLabels.length).fill(null)]
+  const predictionWithGap = [...new Array(Math.max(0, waterLabels.length - 1)).fill(null), waterValues.at(-1), ...predictionValues]
+  const rainWithGap = [...rainfallValues, ...new Array(predictionLabels.length).fill(null)]
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
-  const predGradient = ctx.createLinearGradient(0, 0, 0, 280)
-  predGradient.addColorStop(0, 'rgba(245, 158, 11, 0.2)')
-  predGradient.addColorStop(1, 'rgba(245, 158, 11, 0.01)')
-
-  chartInstance = new Chart(ctx, {
+  chartInstance = new Chart(context, {
     type: 'line',
     data: {
       labels: allLabels,
       datasets: [
         {
-          label: 'ระดับน้ำจริง (m)',
-          data: actualWithGap,
-          borderColor: '#0ea5e9',
-          backgroundColor: waterGradient,
-          borderWidth: 2.5,
-          fill: true,
-          tension: 0.4,
-          pointRadius: 0,
-          pointHoverRadius: 5,
-          pointHoverBackgroundColor: '#0ea5e9',
-          spanGaps: false,
+          label: `${historyLegendLabel.value} (ม.)`, data: actualWithGap, borderColor: '#0369a1', backgroundColor: isEstimatedHistory.value ? 'transparent' : waterGradient,
+          borderWidth: 2.5, borderDash: isEstimatedHistory.value ? [4, 4] : [], fill: !isEstimatedHistory.value, tension: .3, pointRadius: 0, pointHoverRadius: 5, spanGaps: false,
         },
         {
-          label: 'AI พยากรณ์ (m)',
-          data: predWithGap,
-          borderColor: '#f59e0b',
-          backgroundColor: predGradient,
-          borderWidth: 2.5,
-          borderDash: [6, 4],
-          fill: true,
-          tension: 0.4,
-          pointRadius: 0,
-          pointHoverRadius: 5,
-          pointHoverBackgroundColor: '#f59e0b',
-          spanGaps: false,
+          label: 'แนวโน้ม 12 ชม. (ม.)', data: predictionWithGap, borderColor: '#b45309', backgroundColor: 'transparent',
+          borderWidth: 2.5, borderDash: [7, 5], fill: false, tension: .3, pointRadius: 0, pointHoverRadius: 5, spanGaps: false,
         },
         {
-          label: 'ปริมาณฝน (mm)',
-          data: rainWithGap,
-          type: 'bar',
-          backgroundColor: 'rgba(99, 102, 241, 0.35)',
-          borderColor: 'rgba(99, 102, 241, 0.6)',
-          borderWidth: 1,
-          borderRadius: 2,
-          yAxisID: 'y1',
-          barPercentage: 0.8,
-          order: 2,
+          label: 'ปริมาณฝน (มม.)', data: rainWithGap, type: 'bar', backgroundColor: 'rgba(37, 99, 235, .18)',
+          borderColor: 'rgba(37, 99, 235, .45)', borderWidth: 1, borderRadius: 3, yAxisID: 'y1', barPercentage: .8,
         },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      interaction: {
-        mode: 'index',
-        intersect: false,
-      },
+      animation: reduceMotion ? false : { duration: 250 },
+      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: {
-          position: 'top',
-          labels: {
-            color: '#94a3b8',
-            font: { family: 'Inter', size: 11 },
-            padding: 16,
-            usePointStyle: true,
-            pointStyleWidth: 8,
-          },
-        },
+        legend: { display: false },
         tooltip: {
-          backgroundColor: 'rgba(15, 23, 42, 0.95)',
-          titleColor: '#f1f5f9',
-          bodyColor: '#94a3b8',
-          borderColor: 'rgba(56, 189, 248, 0.2)',
-          borderWidth: 1,
-          cornerRadius: 8,
-          padding: 12,
-          titleFont: { family: 'Inter', weight: '600' },
-          bodyFont: { family: 'Inter' },
+          backgroundColor: 'rgba(15, 23, 42, .96)', titleColor: '#f8fafc', bodyColor: '#e2e8f0',
+          borderColor: 'rgba(148, 163, 184, .3)', borderWidth: 1, cornerRadius: 10, padding: 12,
+          titleFont: { family: 'Noto Sans Thai', weight: '600' }, bodyFont: { family: 'Noto Sans Thai' },
         },
       },
       scales: {
         x: {
-          ticks: {
-            color: '#64748b',
-            font: { family: 'Inter', size: 10 },
-            maxTicksLimit: 12,
-            maxRotation: 0,
-          },
-          grid: {
-            color: 'rgba(148, 163, 184, 0.06)',
-            drawBorder: false,
-          },
+          ticks: { color: '#64748b', font: { family: 'Noto Sans Thai', size: 11 }, maxTicksLimit: 10, maxRotation: 0 },
+          grid: { display: false },
         },
         y: {
-          position: 'left',
-          title: {
-            display: true,
-            text: 'ระดับน้ำ (m)',
-            color: '#64748b',
-            font: { family: 'Inter', size: 11 },
-          },
-          ticks: {
-            color: '#64748b',
-            font: { family: 'Inter', size: 10 },
-          },
-          grid: {
-            color: 'rgba(148, 163, 184, 0.06)',
-            drawBorder: false,
-          },
-          suggestedMin: 0,
-          suggestedMax: 5,
+          position: 'left', title: { display: true, text: 'ระดับน้ำ (ม.)', color: '#64748b' },
+          ticks: { color: '#64748b' }, grid: { color: 'rgba(148, 163, 184, .14)' }, suggestedMin: 0,
         },
         y1: {
-          position: 'right',
-          title: {
-            display: true,
-            text: 'ปริมาณฝน (mm)',
-            color: '#64748b',
-            font: { family: 'Inter', size: 11 },
-          },
-          ticks: {
-            color: '#64748b',
-            font: { family: 'Inter', size: 10 },
-          },
-          grid: { display: false },
-          suggestedMin: 0,
-          suggestedMax: 50,
+          position: 'right', title: { display: true, text: 'ฝน (มม.)', color: '#64748b' },
+          ticks: { color: '#64748b' }, grid: { display: false }, suggestedMin: 0,
         },
       },
     },
   })
 }
 
-watch(activeTab, () => {
-  nextTick(buildChart)
-})
+watch([tsData, activeTab], () => nextTick(buildChart), { deep: true })
 
-watch(() => props.stationId, async () => {
-  await refreshNuxtData()
-  nextTick(buildChart)
-})
-
-onMounted(() => {
-  nextTick(buildChart)
-})
-
-onUnmounted(() => {
-  if (chartInstance) chartInstance.destroy()
-})
+onMounted(() => nextTick(buildChart))
+onUnmounted(() => chartInstance?.destroy())
 </script>
+
+<style scoped>
+.chart-card-header { align-items: flex-start; gap: 1rem; }
+.chart-actions { display: flex; align-items: center; gap: .5rem; }
+.history-provenance { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .65rem; margin-top: .5rem; }
+.history-badge { min-height: 24px; display: inline-flex; align-items: center; border: 1px solid var(--border-subtle); border-radius: 999px; padding: .15rem .55rem; color: var(--text-secondary); background: var(--bg-primary); font-size: .68rem; font-weight: 800; }
+.history-badge.live { color: var(--color-safe); background: var(--color-safe-bg); border-color: color-mix(in srgb, var(--color-safe) 25%, transparent); }
+.history-badge.estimated, .history-badge.demo { color: var(--color-warning); background: var(--color-warning-bg); border-color: color-mix(in srgb, var(--color-warning) 28%, transparent); }
+.history-badge.error { color: var(--color-danger); background: var(--color-danger-bg); }
+.history-source { color: var(--text-muted); font-size: .68rem; }
+.icon-action { width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--border-subtle); background: var(--bg-secondary); color: var(--text-secondary); display: grid; place-items: center; cursor: pointer; }
+.icon-action:disabled { cursor: wait; opacity: .65; }
+.chart-wrapper { position: relative; min-height: 320px; transition: opacity .2s; }
+.chart-wrapper.refreshing { opacity: .72; }
+.inline-refresh-status { position: absolute; top: .5rem; right: .5rem; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 20px; padding: .3rem .65rem; color: var(--text-secondary); font-size: .75rem; }
+.chart-loading { display: grid; gap: 1rem; }
+.skeleton-chart { height: 300px; border-radius: 12px; background: linear-gradient(90deg, var(--bg-primary), var(--bg-secondary), var(--bg-primary)); background-size: 200% 100%; animation: skeleton-shift 1.4s infinite; }
+.chart-footnote { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; align-items: center; color: var(--text-muted); font-size: .75rem; margin-top: .75rem; }
+.chart-footnote span { display: inline-flex; align-items: center; gap: .4rem; }
+.legend-line { width: 24px; height: 3px; border-radius: 2px; background: #0369a1; }
+.legend-line.estimated { background: repeating-linear-gradient(90deg, #0369a1 0 5px, transparent 5px 9px); }
+.legend-line.forecast { background: repeating-linear-gradient(90deg, #b45309 0 6px, transparent 6px 10px); }
+.legend-block.rain { width: 12px; height: 9px; display: inline-block; border-radius: 2px; background: rgba(37, 99, 235, .28); }
+.forecast-table-details { margin-top: .75rem; color: var(--text-secondary); font-size: .8rem; }
+.forecast-table-details summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--accent); font-weight: 700; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: .55rem; border-bottom: 1px solid var(--border-subtle); text-align: left; white-space: nowrap; }
+@media (max-width: 700px) { .chart-card-header { display: grid; } .chart-actions { justify-content: space-between; width: 100%; } .chart-wrapper { min-height: 280px; } }
+@media (prefers-reduced-motion: reduce) { .chart-wrapper { transition: none; } }
+</style>

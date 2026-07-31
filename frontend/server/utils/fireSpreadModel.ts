@@ -43,6 +43,8 @@ interface FireSpreadPrediction {
     windSpeed: number
     windDeg: number
     windDirection: string
+    spreadDirectionDeg: number
+    spreadDirection: string
     spreadCells: SpreadCell[]
     maxSpreadKm: number
     spreadArrow: { lat: number, lng: number }  // endpoint of wind arrow
@@ -117,9 +119,9 @@ export function predictFireSpread(
     fireId: string,
     wind: WindData
 ): FireSpreadPrediction {
-    // Wind blows FROM deg, fire spreads TO (opposite + same direction)
-    // Wind deg is where wind comes FROM, so fire spreads in the wind direction
-    const spreadDir = wind.deg // fire moves in the direction wind blows TO
+    // Meteorological wind direction is where wind comes FROM. Fire and smoke
+    // move toward the opposite bearing.
+    const spreadDir = (wind.deg + 180) % 360
 
     // Base spread distance based on wind speed and fire intensity
     // wind speed m/s → km/h * factor
@@ -171,6 +173,8 @@ export function predictFireSpread(
         windSpeed: wind.speed,
         windDeg: wind.deg,
         windDirection: degToCompass(wind.deg),
+        spreadDirectionDeg: spreadDir,
+        spreadDirection: degToCompass(spreadDir),
         spreadCells,
         maxSpreadKm: Math.round(baseSpreadKm * 10) / 10,
         spreadArrow,
@@ -187,8 +191,9 @@ export function predictRainDirection(
     rain24h: number,
     wind: WindData
 ): { directionDeg: number, directionLabel: string, speedKmh: number, predictedPath: Array<{ lat: number, lng: number, hours: number, distanceKm: number }> } {
-    // Rain clouds move in the wind direction
-    const dirDeg = wind.deg
+    // Meteorological wind direction is where wind comes FROM; rain cells move
+    // toward the opposite bearing.
+    const dirDeg = (wind.deg + 180) % 360
     const dirLabel = degToCompass(dirDeg)
 
     // Speed of cloud movement ~ wind speed

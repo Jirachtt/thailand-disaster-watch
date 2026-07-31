@@ -1,24 +1,27 @@
 <template>
-  <div class="alert-banner" :class="bannerClass">
-    <span class="alert-icon material-symbols-rounded">
-      {{ alertIcon }}
-    </span>
+  <section class="alert-banner" :class="bannerClass" role="status" aria-live="polite">
+    <span class="alert-icon material-symbols-rounded" aria-hidden="true">{{ alertIcon }}</span>
     <div class="alert-content">
       <div class="alert-title">{{ alertTitle }}</div>
       <div class="alert-text">{{ alertText }}</div>
+      <div class="alert-sources" aria-label="สถานะแหล่งข้อมูล">
+        <span v-for="source in sourceStates" :key="source.label" class="source-state" :class="source.status">
+          <span class="source-state-dot" aria-hidden="true"></span>
+          {{ source.label }} · {{ statusLabel(source.status) }}
+        </span>
+      </div>
     </div>
-    <button 
-      v-if="primaryAlertLocation" 
-      class="view-map-btn" 
+    <button
+      v-if="primaryAlertLocation"
+      class="view-map-btn"
+      type="button"
       @click="$emit('view-map', primaryAlertLocation)"
     >
-      <span class="material-symbols-rounded">my_location</span>
-      ดูพิกัด
+      <span class="material-symbols-rounded" aria-hidden="true">my_location</span>
+      ดูบนแผนที่
     </button>
-    <span v-if="bannerClass !== 'safe'" class="risk-badge" :class="bannerClass">
-      {{ bannerBadge }}
-    </span>
-  </div>
+    <span class="risk-badge" :class="bannerClass">{{ bannerBadge }}</span>
+  </section>
 </template>
 
 <script setup>
@@ -26,120 +29,104 @@ const props = defineProps({
   riskLevel: { type: String, default: 'safe' },
   stations: { type: Array, default: () => [] },
   fires: { type: Array, default: () => [] },
+  waterStatus: { type: String, default: 'loading' },
+  fireStatus: { type: String, default: 'loading' },
+  aqiStatus: { type: String, default: 'loading' },
 })
 
 defineEmits(['view-map'])
 
-const activeFires = computed(() => props.fires.filter((f) => f.status === 'active'))
-const hasHighFire = computed(() => props.fires.some((f) => f.intensity === 'extreme' || f.intensity === 'high'))
+const isUsableStatus = (status) => ['live', 'stale'].includes(status)
 
-// สถานีที่ ThaiWater API ยืนยันว่าล้นตลิ่ง (situation_level >= 5, real-time)
-const dangerStations = computed(() => props.stations.filter((s) => s.riskLevel === 'danger'))
-// สถานีที่ ThaiWater API ยืนยันว่าวิกฤต (situation_level >= 3)
-const criticalStations = computed(() => props.stations.filter((s) => s.riskLevel === 'critical'))
-// สถานีเฝ้าระวัง (situation_level >= 2)
-const warningStations = computed(() => props.stations.filter((s) => s.riskLevel === 'warning'))
-// ไฟป่ารุนแรงมาก
-const extremeFires = computed(() => activeFires.value.filter((f) => f.intensity === 'extreme'))
+const verifiedStations = computed(() => isUsableStatus(props.waterStatus) ? props.stations : [])
+const verifiedFires = computed(() => isUsableStatus(props.fireStatus)
+  ? props.fires.filter((fire) => fire.status === 'active')
+  : [])
 
-const primaryAlertLocation = computed(() => {
-  if (dangerStations.value.length > 0) return dangerStations.value[0]
-  if (extremeFires.value.length >= 5) return extremeFires.value[0]
-  if (criticalStations.value.length > 0) return criticalStations.value[0]
-  if (extremeFires.value.length > 0) return extremeFires.value[0]
-  if (warningStations.value.length > 0) return warningStations.value[0]
-  if (activeFires.value.length > 0) return activeFires.value[0]
-  return null
-})
+const floodDanger = computed(() => verifiedStations.value.filter((station) => station.riskType === 'flood' && station.riskLevel === 'danger'))
+const floodWarning = computed(() => verifiedStations.value.filter((station) => station.riskType === 'flood' && station.riskLevel === 'warning'))
+const droughtDanger = computed(() => verifiedStations.value.filter((station) => station.riskType === 'drought' && station.riskLevel === 'danger'))
+const droughtWarning = computed(() => verifiedStations.value.filter((station) => station.riskType === 'drought' && station.riskLevel === 'warning'))
+const extremeFires = computed(() => verifiedFires.value.filter((fire) => fire.intensity === 'extreme'))
+const highFires = computed(() => verifiedFires.value.filter((fire) => ['extreme', 'high'].includes(fire.intensity)))
+const hasFallback = computed(() => [props.waterStatus, props.fireStatus, props.aqiStatus].includes('fallback'))
+const isLoading = computed(() => [props.waterStatus, props.fireStatus, props.aqiStatus].every(status => status === 'loading'))
 
-// เกณฑ์เข้มงวด — วิกฤตจริงๆ เท่านั้น (ข้อมูล real-time จาก API)
+const sourceStates = computed(() => [
+  { label: 'น้ำ', status: props.waterStatus },
+  { label: 'ไฟ', status: props.fireStatus },
+  { label: 'ฝุ่น', status: props.aqiStatus },
+])
+
 const bannerClass = computed(() => {
-  // วิกฤต = ล้นตลิ่งจริง (situation_level >= 5) หรือ ไฟ extreme >= 5 จุด
-  if (dangerStations.value.length > 0 || extremeFires.value.length >= 5) return 'danger'
-  // เฝ้าระวัง = situation_level >= 2 หรือ มีไฟ high/extreme
-  if (criticalStations.value.length > 0 || warningStations.value.length > 0 || hasHighFire.value) return 'warning'
-  if (activeFires.value.length > 0) return 'warning'
+  if (floodDanger.value.length || droughtDanger.value.length || extremeFires.value.length >= 5) return 'danger'
+  if (floodWarning.value.length || droughtWarning.value.length || highFires.value.length) return 'warning'
+  if (isLoading.value || hasFallback.value) return 'info'
   return 'safe'
 })
 
-const alertIcon = computed(() => {
-  if (bannerClass.value === 'danger') return 'crisis_alert'
-  if (bannerClass.value === 'warning') return 'warning'
-  return 'verified_user'
-})
+const alertIcon = computed(() => ({
+  danger: 'crisis_alert',
+  warning: 'warning',
+  info: isLoading.value ? 'sync' : 'database',
+  safe: 'verified_user',
+}[bannerClass.value]))
 
-const bannerBadge = computed(() => {
-  if (bannerClass.value === 'danger') return 'วิกฤต'
-  if (bannerClass.value === 'warning') return 'เฝ้าระวัง'
-  return ''
-})
+const bannerBadge = computed(() => ({
+  danger: 'วิกฤต',
+  warning: 'เฝ้าระวัง',
+  info: isLoading.value ? 'กำลังซิงก์' : 'ข้อมูลสำรอง',
+  safe: 'ปกติ',
+}[bannerClass.value]))
+
+const primaryAlertLocation = computed(() => (
+  floodDanger.value[0]
+  || droughtDanger.value[0]
+  || extremeFires.value[0]
+  || floodWarning.value[0]
+  || droughtWarning.value[0]
+  || highFires.value[0]
+  || null
+))
 
 const alertTitle = computed(() => {
-  // วิกฤต — ล้นตลิ่ง + ไฟ extreme
-  if (dangerStations.value.length && extremeFires.value.length) {
-    return '🚨 แจ้งเตือนวิกฤต — น้ำล้นตลิ่ง + ไฟป่ารุนแรงมาก!'
-  }
-  // วิกฤต — ล้นตลิ่ง (situation_level >= 5)
-  if (dangerStations.value.length) {
-    return '🚨 แจ้งเตือนวิกฤต — ระดับน้ำล้นตลิ่ง! (ข้อมูล Real-time จาก ThaiWater)'
-  }
-  // ไฟ extreme >= 5 จุด
-  if (extremeFires.value.length >= 5) {
-    return '🔥 แจ้งเตือนวิกฤต — ไฟป่ารุนแรงมากหลายจุด!'
-  }
-  // เฝ้าระวัง — situation_level >= 3 (วิกฤตจาก API แต่ยังไม่ล้นตลิ่ง)
-  if (criticalStations.value.length) {
-    return '⚠️ เฝ้าระวังสูง — ระดับน้ำใกล้วิกฤต (ข้อมูล Real-time)'
-  }
-  // ไฟ extreme แต่ไม่ถึง 5 จุด
-  if (extremeFires.value.length > 0) {
-    return '🔥 เฝ้าระวังไฟป่า — ตรวจพบจุดไฟรุนแรงมาก'
-  }
-  if (hasHighFire.value) {
-    return '🔥 เฝ้าระวังไฟป่า — ตรวจพบจุดไฟรุนแรง'
-  }
-  if (activeFires.value.length > 0) {
-    return '🔥 ตรวจพบไฟไหม้ — กำลังติดตามสถานการณ์'
-  }
-  // เฝ้าระวัง — situation_level >= 2
-  if (warningStations.value.length) {
-    return '🟡 เฝ้าระวัง — ระดับน้ำสูงกว่าปกติ (ข้อมูล Real-time)'
-  }
-
-  return '✅ สถานการณ์ปกติ — ระดับน้ำอยู่ในเกณฑ์ปลอดภัย'
+  if (floodDanger.value.length) return 'แจ้งเตือนระดับน้ำล้นตลิ่ง'
+  if (droughtDanger.value.length) return 'แจ้งเตือนสถานการณ์น้ำน้อยวิกฤต'
+  if (extremeFires.value.length >= 5) return 'พบกลุ่มจุดความร้อนรุนแรงหลายพื้นที่'
+  if (floodWarning.value.length) return 'เฝ้าระวังระดับน้ำสูง'
+  if (droughtWarning.value.length) return 'เฝ้าระวังสถานการณ์น้ำน้อย'
+  if (highFires.value.length) return 'เฝ้าระวังจุดความร้อนจากดาวเทียม'
+  if (isLoading.value) return 'กำลังเชื่อมต่อแหล่งข้อมูล'
+  if (hasFallback.value) return 'ระบบพร้อมใช้งานในโหมดข้อมูลสำรองบางส่วน'
+  return 'ยังไม่พบเหตุวิกฤตจากแหล่งข้อมูลที่เชื่อมต่อ'
 })
 
 const alertText = computed(() => {
   const parts = []
+  if (floodDanger.value.length) parts.push(`${floodDanger.value.length} สถานีอยู่ในสถานะล้นตลิ่ง`)
+  else if (floodWarning.value.length) parts.push(`${floodWarning.value.length} สถานีมีปริมาณน้ำมาก`)
 
-  // ข้อมูลน้ำ — จาก ThaiWater API real-time
-  if (dangerStations.value.length) {
-    const names = dangerStations.value.slice(0, 3).map((s) => s.name).join(', ')
-    parts.push(`สถานี ${names} ประดับน้ำสูงเกินตลิ่ง (situation_level=5 จาก ThaiWater API)`)
-  } else if (criticalStations.value.length) {
-    const names = criticalStations.value.slice(0, 3).map((s) => s.name).join(', ')
-    parts.push(`สถานี ${names} ระดับน้ำวิกฤต (situation_level≥3 จาก ThaiWater API)`)
-  } else if (warningStations.value.length) {
-    const names = warningStations.value.slice(0, 3).map((s) => s.name).join(', ')
-    parts.push(`สถานี ${names} มีระดับน้ำสูงกว่าเกณฑ์เฝ้าระวัง`)
+  if (droughtDanger.value.length) parts.push(`${droughtDanger.value.length} สถานีอยู่ในภาวะน้ำน้อยวิกฤต`)
+  else if (droughtWarning.value.length) parts.push(`${droughtWarning.value.length} สถานีมีน้ำน้อย`)
+
+  if (highFires.value.length) parts.push(`พบจุดความร้อนระดับสูง ${highFires.value.length} กลุ่ม`)
+  if (hasFallback.value) parts.push('โมดูลที่ขึ้นคำว่า “ข้อมูลสำรอง” เป็นข้อมูลสาธิตและไม่ถูกนำมาสร้างคำเตือนจริง')
+
+  if (!parts.length) {
+    return isLoading.value
+      ? 'หน้าแดชบอร์ดพร้อมใช้งานระหว่างรอข้อมูล แต่ละโมดูลจะแสดงผลทันทีเมื่อเชื่อมต่อสำเร็จ'
+      : 'ติดตามน้ำ ไฟป่า และ PM2.5 แยกตามเวลาอัปเดตของแต่ละแหล่งข้อมูล'
   }
-
-  // ข้อมูลไฟ — จาก NASA FIRMS
-  if (activeFires.value.length > 0) {
-    const fireNames = activeFires.value.slice(0, 2).map((f) => f.name).join(', ')
-    const totalArea = activeFires.value.reduce((sum, f) => sum + f.areaSqKm, 0).toFixed(1)
-    parts.push(`ตรวจพบไฟ ${activeFires.value.length} จุด (${fireNames}) พื้นที่รวม ${totalArea} ตร.กม.`)
-
-    const topExtreme = extremeFires.value[0]
-    if (topExtreme?.peakEstimate) {
-      parts.push(`AI คาดการณ์ ${topExtreme.name} จะขยายถึง ${topExtreme.peakEstimate.areaSqKm} ตร.กม. ใน ${topExtreme.peakEstimate.timeHours} ชม.`)
-    }
-  }
-
-  if (parts.length === 0) {
-    return 'ระดับน้ำทุกสถานีอยู่ในเกณฑ์ปกติ ไม่พบจุดไฟไหม้ — ข้อมูล Real-time จาก ThaiWater API & NASA FIRMS'
-  }
-
-  return parts.join(' • ')
+  return parts.join(' · ')
 })
+
+function statusLabel(status) {
+  return {
+    live: 'เชื่อมต่อแล้ว',
+    stale: 'ข้อมูลล่าสุดที่บันทึกไว้',
+    fallback: 'ข้อมูลสาธิต',
+    error: 'เชื่อมต่อไม่ได้',
+    loading: 'กำลังโหลด',
+  }[status] || 'รอตรวจสอบ'
+}
 </script>

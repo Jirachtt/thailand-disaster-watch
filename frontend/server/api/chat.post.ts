@@ -1,9 +1,115 @@
-import { fetchRealFireData, fetchRealWaterData, fetchRealRainData } from '../utils/realTimeData'
 import { fetchAirQualityData } from '../utils/airQuality'
+import { fetchRealFireData, fetchRealRainData, fetchRealWaterData } from '../utils/realTimeData'
+
+type DataKey = 'fire' | 'water' | 'rain' | 'air'
+type ChatIntent = DataKey | 'evacuation' | 'summary' | 'safety' | 'help'
+
+const DATA_TIMEOUT_MS = 7500
+
+const fetchers: Record<DataKey, () => Promise<any>> = {
+    fire: fetchRealFireData,
+    water: fetchRealWaterData,
+    rain: fetchRealRainData,
+    air: fetchAirQualityData,
+}
+
+const defaultSourceNames: Record<DataKey, string> = {
+    fire: 'NASA FIRMS',
+    water: 'ThaiWater',
+    rain: 'ThaiWater',
+    air: 'Open-Meteo Air Quality (CAMS)',
+}
+
+function detectIntent(message: string): ChatIntent {
+    if (message.includes('อพยพ') || message.includes('หนี') || message.includes('evacuat')) return 'evacuation'
+    if (message.includes('ปลอดภัย') || message.includes('safe')) return 'safety'
+    if (message.includes('ไฟ') || message.includes('fire') || message.includes('hotspot') || message.includes('จุดความร้อน')) return 'fire'
+    if (message.includes('aqi') || message.includes('pm2.5') || message.includes('pm25') || message.includes('ฝุ่น') || message.includes('อากาศ') || message.includes('ควัน') || message.includes('หมอก')) return 'air'
+    if (message.includes('น้ำ') || message.includes('ท่วม') || message.includes('flood') || message.includes('water')) return 'water'
+    if (message.includes('ฝน') || message.includes('rain')) return 'rain'
+    if (message.includes('สรุป') || message.includes('ตอนนี้') || message.includes('สถานการณ์') || message.includes('summary') || message.includes('เป็นยังไง')) return 'summary'
+    return 'help'
+}
+
+function requestedSources(intent: ChatIntent): DataKey[] {
+    if (['fire', 'water', 'rain', 'air'].includes(intent)) return [intent as DataKey]
+    if (intent === 'summary' || intent === 'safety') return ['fire', 'water', 'rain', 'air']
+    return []
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Data source timed out')), timeoutMs)
+    })
+
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timer) clearTimeout(timer)
+    })
+}
+
+async function fetchRequestedData(keys: DataKey[]) {
+    const datasets: Partial<Record<DataKey, any>> = {}
+    const settled = await Promise.allSettled(keys.map(async (key) => ({
+        key,
+        data: await withTimeout(fetchers[key](), DATA_TIMEOUT_MS),
+    })))
+
+    for (const result of settled) {
+        if (result.status === 'fulfilled') datasets[result.value.key] = result.value.data
+    }
+
+    return datasets
+}
+
+function dataStatus(data: any): 'live' | 'stale' | 'fallback' | 'error' {
+    if (!data) return 'error'
+    if (data.status === 'error') return 'error'
+    if (data.status === 'stale') return 'stale'
+    if (data.status === 'fallback' || data.isFallback) return 'fallback'
+    return 'live'
+}
+
+function statusLabel(data: any): string {
+    return {
+        live: 'เชื่อมต่อข้อมูลแล้ว',
+        stale: 'ข้อมูลล่าสุดที่บันทึกไว้',
+        fallback: 'ข้อมูลสาธิต ไม่ใช่เหตุการณ์ปัจจุบัน',
+        error: 'เชื่อมต่อไม่ได้ชั่วคราว',
+    }[dataStatus(data)]
+}
+
+function sourceNote(key: DataKey, data: any): string {
+    if (!data) return `แหล่งข้อมูล: ${defaultSourceNames[key]} — สถานะ: ${statusLabel(data)}`
+    const delay = data.dataDelay ? `\nหมายเหตุ: ${data.dataDelay}` : ''
+    return `แหล่งข้อมูล: ${data.source || defaultSourceNames[key]} — สถานะ: ${statusLabel(data)}${delay}`
+}
+
+function formatNumber(value: unknown, digits = 1): string {
+    const number = Number(value)
+    return Number.isFinite(number) ? number.toFixed(digits) : 'ไม่มีข้อมูล'
+}
+
+function fireRiskLabel(risk: string): string {
+    return {
+        extreme: 'รุนแรงมาก',
+        high: 'รุนแรง',
+        medium: 'ปานกลาง',
+        low: 'ต่ำ',
+    }[risk] || 'รอตรวจสอบ'
+}
+
+function waterRiskLabel(risk: string): string {
+    return {
+        danger: 'วิกฤต',
+        warning: 'เฝ้าระวัง',
+        safe: 'ปกติ',
+    }[risk] || 'รอตรวจสอบ'
+}
 
 export default defineEventHandler(async (event) => {
     const body = await readBody(event)
-    const userMessage = body?.message
+    const userMessage = typeof body?.message === 'string' ? body.message.trim() : ''
 
     if (!userMessage) {
         throw createError({
@@ -12,119 +118,163 @@ export default defineEventHandler(async (event) => {
         })
     }
 
-    // Fetch all real-time data from cached sources (fast — 5-min TTL cache)
-    const [fireData, waterData, rainData, aqiData] = await Promise.all([
-        fetchRealFireData().catch(() => null),
-        fetchRealWaterData().catch(() => null),
-        fetchRealRainData().catch(() => null),
-        fetchAirQualityData().catch(() => null),
-    ])
+    const intent = detectIntent(userMessage.toLowerCase())
 
-    // Extract real-time stats
-    const thaiFires = fireData?.fires || []
-    const worldFires = fireData?.worldFires || []
-    const thaiFireCount = fireData?.activeCount || 0
-    const worldFireCount = fireData?.worldCount || 0
-    const overallFireRisk = fireData?.overallFireRisk || 'low'
+    if (intent === 'evacuation') {
+        return {
+            response: [
+                'คำแนะนำการอพยพ',
+                '',
+                'ระบบนี้ยังไม่มีข้อมูลศูนย์พักพิงที่ผ่านการยืนยันแบบเรียลไทม์ จึงไม่ควรระบุจุดหมายให้เดินทางไปเอง',
+                'หากอยู่ในอันตราย ให้เคลื่อนออกจากแนวไฟ พื้นที่น้ำไหลแรง หรืออาคารที่ไม่มั่นคงตามคำสั่งของเจ้าหน้าที่',
+                'ติดตามประกาศจาก ปภ. จังหวัด เทศบาล หรือหน่วยกู้ภัยในพื้นที่ และใช้หมายเลขฉุกเฉินของพื้นที่เมื่อจำเป็น',
+                'เตรียมยา เอกสารสำคัญ โทรศัพท์ น้ำดื่ม และแจ้งคนใกล้ชิดก่อนเคลื่อนย้าย',
+            ].join('\n'),
+        }
+    }
 
-    const waterStations = waterData?.stations || []
-    const overallWaterRisk = waterData?.overallRisk || 'safe'
-    const dangerStations = waterStations.filter((s: any) => s.riskLevel === 'danger')
-    const warningStations = waterStations.filter((s: any) => s.riskLevel === 'warning' || s.riskLevel === 'critical')
+    if (intent === 'help') {
+        return {
+            response: [
+                'ผมช่วยสรุปข้อมูลบนแดชบอร์ดนี้ได้ในหัวข้อต่อไปนี้',
+                '',
+                '• จุดความร้อนและแนวโน้มไฟป่าในประเทศไทย',
+                '• ระดับน้ำและสถานการณ์จากสถานี ThaiWater',
+                '• ปริมาณฝนและแนวเคลื่อนตัวโดยประมาณ',
+                '• AQI และ PM2.5 พร้อมพยากรณ์',
+                '• สรุปสถานะของทุกแหล่งข้อมูล',
+                '',
+                'ลองถาม เช่น “สรุปสถานการณ์” หรือ “AQI ตอนนี้เป็นอย่างไร”',
+            ].join('\n'),
+        }
+    }
 
-    const rainStations = rainData?.rainStations || []
-    const totalRainStations = rainData?.totalStations || 0
-    const heavyRainStations = rainStations.filter((s: any) => s.intensity === 'extreme' || s.intensity === 'heavy')
+    const datasets = await fetchRequestedData(requestedSources(intent))
+    const fireData = datasets.fire
+    const waterData = datasets.water
+    const rainData = datasets.rain
+    const aqiData = datasets.air
 
-    const aqiStations = aqiData?.stations || []
-    const worstAqi = aqiStations.length > 0
-        ? aqiStations.reduce((w: any, s: any) => (s.aqi > w.aqi ? s : w), aqiStations[0])
-        : null
+    if (intent === 'fire') {
+        if (!fireData || dataStatus(fireData) === 'error') {
+            return { response: `ยังดึงข้อมูลจุดความร้อนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง\n\n${sourceNote('fire', fireData)}` }
+        }
 
-    const msgLower = userMessage.toLowerCase()
-
-    let response = ''
-
-    // === Fire-related questions ===
-    if (msgLower.includes('ไฟ') || msgLower.includes('fire') || msgLower.includes('hotspot') || msgLower.includes('จุดความร้อน')) {
+        const thaiFires = fireData.fires || []
+        const thaiFireCount = Number(fireData.activeCount) || 0
         const topFires = thaiFires.slice(0, 5)
-        const fireList = topFires.map((f: any, i: number) =>
-            `${i + 1}. ${f.name} — ความรุนแรง: ${f.intensity === 'extreme' ? 'รุนแรงมาก' : f.intensity === 'high' ? 'รุนแรง' : f.intensity === 'medium' ? 'ปานกลาง' : 'เบา'}, FRP: ${f.frp} MW, พื้นที่: ${f.areaSqKm} ตร.กม.`
+        const fireList = topFires.map((fire: any, index: number) =>
+            `${index + 1}. ${fire.name} — ระดับ ${fireRiskLabel(fire.intensity)}, FRP ${formatNumber(fire.frp)} MW, พื้นที่ประมาณการ ${formatNumber(fire.areaSqKm, 2)} ตร.กม.`
         ).join('\n')
+        const qualifier = dataStatus(fireData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(fireData)
 
-        const spreadInfo = topFires.length > 0 && topFires[0].peakEstimate
-            ? `\n\n📊 คาดการณ์ลุกลาม 12 ชม.: จุดไฟรุนแรงสุดอาจขยายเป็น ${topFires[0].peakEstimate.areaSqKm} ตร.กม. (รัศมี ${topFires[0].peakEstimate.radiusKm} กม.)`
-            : ''
+        let response = `สถานการณ์จุดความร้อนในประเทศไทย (${qualifier})\n\n`
+        response += thaiFireCount > 0
+            ? `พบ ${thaiFireCount} กลุ่มที่ผ่านเกณฑ์คัดกรอง\nระดับความเสี่ยงรวม: ${fireRiskLabel(fireData.overallFireRisk)}\n\nจุดสำคัญ:\n${fireList}`
+            : 'ไม่พบกลุ่มจุดความร้อนที่ผ่านเกณฑ์คัดกรองในชุดข้อมูลประเทศไทยล่าสุด'
 
-        if (thaiFireCount === 0) {
-            response = `🔥 **สถานการณ์ไฟป่าในประเทศไทย (Real-time):**\n\nขณะนี้ไม่พบจุดความร้อนในประเทศไทยจากดาวเทียม NASA FIRMS\n\n🌍 ทั่วโลก: ตรวจพบ ${worldFireCount} กลุ่มจุดไฟ\n\nแหล่งข้อมูล: ${fireData?.source || 'NASA FIRMS'}`
-        } else {
-            response = `🔥 **สถานการณ์ไฟป่าในประเทศไทย (Real-time):**\n\n• จุดไฟในไทย: **${thaiFireCount} จุด**\n• ทั่วโลก: **${worldFireCount} กลุ่ม**\n• ระดับความเสี่ยง: **${overallFireRisk === 'extreme' ? '🔴 รุนแรงมาก' : overallFireRisk === 'high' ? '🟠 รุนแรง' : overallFireRisk === 'medium' ? '🟡 ปานกลาง' : '🟢 ปกติ'}**\n\n📍 จุดไฟที่รุนแรงที่สุด:\n${fireList || 'ไม่มีข้อมูล'}${spreadInfo}\n\nแหล่งข้อมูล: ${fireData?.source || 'NASA FIRMS'} (${fireData?.dataDelay || 'NRT'})`
+        const peak = topFires[0]?.peakEstimate
+        if (peak) response += `\n\nแนวโน้ม 12 ชม.: พื้นที่ประมาณการ ${formatNumber(peak.areaSqKm, 2)} ตร.กม. รัศมี ${formatNumber(peak.radiusKm, 2)} กม.`
+        response += `\n\n${sourceNote('fire', fireData)}`
+        return { response }
+    }
+
+    if (intent === 'water') {
+        if (!waterData || dataStatus(waterData) === 'error') {
+            return { response: `ยังดึงข้อมูลระดับน้ำไม่สำเร็จ กรุณาลองใหม่อีกครั้ง\n\n${sourceNote('water', waterData)}` }
         }
 
-        // === Water level / flood questions ===
-    } else if (msgLower.includes('น้ำ') || msgLower.includes('ท่วม') || msgLower.includes('flood') || msgLower.includes('water') || msgLower.includes('ระดับ')) {
-        const topDanger = dangerStations.slice(0, 3).map((s: any, i: number) =>
-            `${i + 1}. ${s.name} — ระดับ: ${s.currentLevel.toFixed(2)} m (${s.description})`
+        const stations = waterData.stations || []
+        const criticalStations = stations.filter((station: any) => station.riskLevel === 'danger')
+        const warningStations = stations.filter((station: any) => station.riskLevel === 'warning')
+        const notableStations = [...criticalStations, ...warningStations].slice(0, 6)
+        const stationList = notableStations.map((station: any, index: number) =>
+            `${index + 1}. ${station.name} — ${station.situationLabel || waterRiskLabel(station.riskLevel)}, ระดับ ${formatNumber(station.currentLevel, 2)} ม.`
         ).join('\n')
+        const qualifier = dataStatus(waterData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(waterData)
 
-        const topWarning = warningStations.slice(0, 3).map((s: any, i: number) =>
-            `${i + 1}. ${s.name} — ระดับ: ${s.currentLevel.toFixed(2)} m`
-        ).join('\n')
+        let response = `สถานการณ์ระดับน้ำ (${qualifier})\n\n`
+        response += `สถานีในชุดข้อมูล: ${stations.length} แห่ง\nระดับความเสี่ยงรวม: ${waterRiskLabel(waterData.overallRisk)}\nสถานีวิกฤต: ${criticalStations.length} แห่ง\nสถานีเฝ้าระวัง: ${warningStations.length} แห่ง`
+        if (stationList) response += `\n\nสถานีที่ควรติดตาม:\n${stationList}`
+        response += `\n\n${sourceNote('water', waterData)}`
+        return { response }
+    }
 
-        const riskLabel = overallWaterRisk === 'danger' ? '🔴 วิกฤต' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง' : '🟢 ปกติ'
-
-        response = `💧 **สถานการณ์ระดับน้ำ (Real-time):**\n\n• สถานีทั้งหมด: **${waterStations.length} แห่ง**\n• ระดับความเสี่ยงรวม: **${riskLabel}**\n• วิกฤต (ล้นตลิ่ง): ${dangerStations.length} แห่ง\n• เฝ้าระวัง: ${warningStations.length} แห่ง`
-
-        if (topDanger.length > 0) {
-            response += `\n\n🚨 สถานีวิกฤต:\n${topDanger}`
-        }
-        if (topWarning.length > 0) {
-            response += `\n\n⚠️ สถานีเฝ้าระวัง:\n${topWarning}`
-        }
-
-        response += `\n\nแหล่งข้อมูล: ${waterData?.source || 'ThaiWater API'}`
-
-        // === Rain questions ===
-    } else if (msgLower.includes('ฝน') || msgLower.includes('rain') || msgLower.includes('ฝนตก')) {
-        const topRain = rainStations.slice(0, 5).map((s: any, i: number) =>
-            `${i + 1}. ${s.name} (${s.province}) — ${s.rain24h} mm (${s.intensity === 'extreme' ? 'หนักมาก' : s.intensity === 'heavy' ? 'หนัก' : s.intensity === 'moderate' ? 'ปานกลาง' : 'เบา'})`
-        ).join('\n')
-
-        response = `🌧️ **สถานการณ์ฝนตก (Real-time):**\n\n• สถานีที่มีฝนตก: **${totalRainStations} แห่ง**\n• ฝนหนัก-หนักมาก: **${heavyRainStations.length} แห่ง**\n\n📍 สถานีฝนตกหนักสุด:\n${topRain || 'ไม่มีฝนตก'}\n\nแหล่งข้อมูล: ${rainData?.source || 'ThaiWater API'}`
-
-        // === AQI / PM2.5 / Air quality ===
-    } else if (msgLower.includes('aqi') || msgLower.includes('pm2.5') || msgLower.includes('pm25') || msgLower.includes('ฝุ่น') || msgLower.includes('อากาศ') || msgLower.includes('ควัน') || msgLower.includes('หมอก')) {
-        const aqiList = aqiStations.slice(0, 8).map((s: any, i: number) =>
-            `${i + 1}. ${s.name} — AQI: ${s.aqi} (${s.label}), PM2.5: ${s.pm25 || 'N/A'} µg/m³`
-        ).join('\n')
-
-        response = `😷 **คุณภาพอากาศ (Real-time):**\n\n• จำนวนสถานี: **${aqiStations.length} แห่ง**`
-
-        if (worstAqi) {
-            response += `\n• แย่ที่สุด: **${worstAqi.name} — AQI ${worstAqi.aqi} (${worstAqi.label})**`
+    if (intent === 'rain') {
+        if (!rainData || dataStatus(rainData) === 'error') {
+            return { response: `ยังดึงข้อมูลฝนไม่สำเร็จ กรุณาลองใหม่อีกครั้ง\n\n${sourceNote('rain', rainData)}` }
         }
 
-        response += `\n\n📍 ข้อมูลรายเมือง:\n${aqiList || 'ไม่มีข้อมูล'}\n\nแหล่งข้อมูล: ${aqiData?.source || 'AQICN'}`
+        const rainStations = rainData.rainStations || []
+        const heavyStations = rainStations.filter((station: any) => ['extreme', 'heavy'].includes(station.intensity))
+        const rainList = rainStations.slice(0, 5).map((station: any, index: number) =>
+            `${index + 1}. ${station.name}${station.province ? ` (${station.province})` : ''} — ${formatNumber(station.rain24h)} มม. ใน 24 ชม.`
+        ).join('\n')
+        const qualifier = dataStatus(rainData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(rainData)
 
-        // === Evacuation ===
-    } else if (msgLower.includes('อพยพ') || msgLower.includes('หนี') || msgLower.includes('evacuat')) {
-        response = `⚠️ **ข้อแนะนำการอพยพ:**\n\nศูนย์พักพิงใกล้เคียง:\n1. โรงเรียนสนามกีฬาเทศบาลนครเชียงใหม่\n2. ศูนย์ประชุมและแสดงสินค้านานาชาติฯ\n\n📌 สถานการณ์ปัจจุบัน:\n• น้ำ: ${overallWaterRisk === 'danger' ? '🔴 วิกฤต — ควรเตรียมอพยพ' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง' : '🟢 ปกติ'}\n• ไฟป่า: ${thaiFireCount} จุด (${overallFireRisk})\n\n*เตรียมเอกสารสำคัญและยารักษาโรคให้พร้อมครับ*`
+        let response = `สถานการณ์ฝน (${qualifier})\n\nสถานีที่ผ่านเกณฑ์ฝน: ${rainStations.length} แห่ง\nฝนหนักถึงหนักมาก: ${heavyStations.length} แห่ง`
+        if (rainList) response += `\n\nสถานีฝนสะสมสูงสุด:\n${rainList}`
+        response += `\n\n${sourceNote('rain', rainData)}`
+        return { response }
+    }
 
-        // === General / สรุป / summary ===
-    } else if (msgLower.includes('สรุป') || msgLower.includes('ตอนนี้') || msgLower.includes('สถานการณ์') || msgLower.includes('summary') || msgLower.includes('เป็นยังไง')) {
-        response = `📊 **สรุปสถานการณ์ภัยพิบัติ (Real-time):**\n\n🔥 ไฟป่าในไทย: **${thaiFireCount} จุด** (ความเสี่ยง: ${overallFireRisk === 'extreme' ? 'รุนแรงมาก' : overallFireRisk === 'high' ? 'รุนแรง' : overallFireRisk === 'medium' ? 'ปานกลาง' : 'ปกติ'})\n💧 ระดับน้ำ: **${overallWaterRisk === 'danger' ? '🔴 วิกฤต' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง' : '🟢 ปกติ'}** (${waterStations.length} สถานี)\n🌧️ ฝนตก: **${totalRainStations} สถานี** (หนัก ${heavyRainStations.length} แห่ง)\n😷 AQI แย่สุด: **${worstAqi ? `${worstAqi.name} AQI ${worstAqi.aqi}` : 'ไม่มีข้อมูล'}**\n🌍 ไฟทั่วโลก: ${worldFireCount} กลุ่ม\n\nข้อมูลจาก: NASA FIRMS, ThaiWater, AQICN (อัปเดตทุก 5 นาที)`
+    if (intent === 'air') {
+        if (!aqiData || dataStatus(aqiData) === 'error') {
+            return { response: `ยังดึงข้อมูลคุณภาพอากาศไม่สำเร็จ กรุณาลองใหม่อีกครั้ง\n\n${sourceNote('air', aqiData)}` }
+        }
 
-        // === Safety questions (specific area) ===
-    } else if (msgLower.includes('ปลอดภัย') || msgLower.includes('safe') || msgLower.includes('เชียงใหม่')) {
-        response = `📍 **วิเคราะห์สถานการณ์ปัจจุบัน (Real-time):**\n\n• ไฟป่า: ${thaiFireCount > 0 ? `ตรวจพบ **${thaiFireCount} จุด** ในไทย` : 'ไม่พบจุดความร้อน ✅'}\n• ระดับน้ำ: ${overallWaterRisk === 'danger' ? '🔴 มีสถานีวิกฤต ' + dangerStations.length + ' แห่ง' : overallWaterRisk === 'warning' ? '🟡 เฝ้าระวัง ' + warningStations.length + ' แห่ง' : '🟢 ปกติ'}\n• ฝนตก: ${totalRainStations > 0 ? `${totalRainStations} สถานี (หนัก ${heavyRainStations.length})` : 'ไม่มีฝนตก'}\n• อากาศ: ${worstAqi ? `AQI สูงสุด ${worstAqi.aqi} (${worstAqi.label}) — ${worstAqi.name}` : 'ไม่มีข้อมูล'}${worstAqi && worstAqi.aqi > 100 ? '\n\n⚠️ แนะนำสวมหน้ากาก N95 เมื่ออยู่กลางแจ้ง' : ''}`
+        const stations = aqiData.stations || []
+        const sortedStations = [...stations].sort((a: any, b: any) => Number(b.aqi) - Number(a.aqi))
+        const worstAqi = sortedStations[0]
+        const aqiList = sortedStations.slice(0, 8).map((station: any, index: number) =>
+            `${index + 1}. ${station.name} — AQI ${formatNumber(station.aqi, 0)} (${station.label}), PM2.5 ${formatNumber(station.pm25)} µg/m³`
+        ).join('\n')
+        const qualifier = dataStatus(aqiData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(aqiData)
 
-        // === Default fallback with data summary ===
+        let response = `คุณภาพอากาศ (${qualifier})\n\nพื้นที่ในชุดข้อมูล: ${stations.length} แห่ง`
+        if (worstAqi) response += `\nค่าสูงสุด: ${worstAqi.name} — AQI ${formatNumber(worstAqi.aqi, 0)} (${worstAqi.label})`
+        if (aqiList) response += `\n\nข้อมูลรายพื้นที่:\n${aqiList}`
+        response += `\n\n${sourceNote('air', aqiData)}`
+        return { response }
+    }
+
+    const summaryLines: string[] = ['สรุปสถานะจากแหล่งข้อมูลที่เชื่อมต่อได้', '']
+
+    if (fireData && dataStatus(fireData) !== 'error') {
+        summaryLines.push(`• จุดความร้อนในไทย: ${Number(fireData.activeCount) || 0} กลุ่ม — ${statusLabel(fireData)}`)
     } else {
-        response = `เข้าใจแล้วครับ 😊 ผมตอบได้เกี่ยวกับ:\n\n• **ไฟป่า** — จุดความร้อน, ทิศทางลามไฟ (ตอนนี้ ${thaiFireCount} จุดในไทย)\n• **ระดับน้ำ** — สถานีวัดระดับน้ำ, ความเสี่ยงน้ำท่วม\n• **ฝนตก** — สถานีฝน, ปริมาณสะสม\n• **คุณภาพอากาศ** — AQI, PM2.5\n• **สรุปสถานการณ์** — ภาพรวมทั้งหมด\n• **อพยพ** — ศูนย์พักพิง, คำแนะนำ\n\nลองถามเช่น "ไฟป่าตอนนี้กี่จุด?" หรือ "สรุปสถานการณ์" ครับ`
+        summaryLines.push('• จุดความร้อน: เชื่อมต่อไม่ได้ชั่วคราว')
     }
 
-    return {
-        response
+    if (waterData && dataStatus(waterData) !== 'error') {
+        const stations = waterData.stations || []
+        summaryLines.push(`• ระดับน้ำ: ${waterRiskLabel(waterData.overallRisk)} (${stations.length} สถานี) — ${statusLabel(waterData)}`)
+    } else {
+        summaryLines.push('• ระดับน้ำ: เชื่อมต่อไม่ได้ชั่วคราว')
     }
+
+    if (rainData && dataStatus(rainData) !== 'error') {
+        const stations = rainData.rainStations || []
+        const heavyCount = stations.filter((station: any) => ['extreme', 'heavy'].includes(station.intensity)).length
+        summaryLines.push(`• ฝน: ${stations.length} สถานีผ่านเกณฑ์ (หนัก ${heavyCount}) — ${statusLabel(rainData)}`)
+    } else {
+        summaryLines.push('• ฝน: เชื่อมต่อไม่ได้ชั่วคราว')
+    }
+
+    if (aqiData && dataStatus(aqiData) !== 'error') {
+        const stations = aqiData.stations || []
+        const worstAqi = stations.length
+            ? stations.reduce((worst: any, station: any) => Number(station.aqi) > Number(worst.aqi) ? station : worst, stations[0])
+            : null
+        summaryLines.push(`• คุณภาพอากาศ: ${worstAqi ? `${worstAqi.name} AQI ${formatNumber(worstAqi.aqi, 0)}` : 'ไม่มีข้อมูลรายพื้นที่'} — ${statusLabel(aqiData)}`)
+    } else {
+        summaryLines.push('• คุณภาพอากาศ: เชื่อมต่อไม่ได้ชั่วคราว')
+    }
+
+    if (intent === 'safety') {
+        summaryLines.unshift('ระบบนี้ไม่สามารถยืนยันว่าแต่ละพิกัด “ปลอดภัย” ได้ โปรดตรวจประกาศจากหน่วยงานท้องถิ่นก่อนตัดสินใจเดินทาง', '')
+    }
+
+    summaryLines.push('', 'ข้อมูลสาธิตจะไม่ถูกใช้ยืนยันเหตุการณ์จริง และผลพยากรณ์ไม่ใช่คำสั่งอพยพ')
+    return { response: summaryLines.join('\n') }
 })

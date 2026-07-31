@@ -8,23 +8,25 @@
         type="text" 
         class="map-search-input" 
         placeholder="ค้นหาจังหวัด / ประเทศ / สถานที่..." 
+        aria-label="ค้นหาสถานที่บนแผนที่"
         @keydown.enter="searchLocation"
       />
-      <button v-if="searchQuery" class="map-search-clear" @click="searchQuery = ''; searchResults = []">
-        <span class="material-symbols-rounded" style="font-size: 16px">×</span>
+      <button v-if="searchQuery" type="button" class="map-search-clear" aria-label="ล้างคำค้น" @click="searchQuery = ''; searchResults = []">
+        <span class="material-symbols-rounded" aria-hidden="true" style="font-size: 16px">close</span>
       </button>
     </div>
     <!-- Search Results Dropdown -->
     <div v-if="searchResults.length" class="map-search-results">
-      <div 
+      <button
         v-for="(result, idx) in searchResults" 
         :key="idx" 
+        type="button"
         class="map-search-result-item"
         @click="flyToResult(result)"
       >
         <span class="material-symbols-rounded" style="font-size: 16px; color: var(--accent)">place</span>
         <span>{{ result.display_name }}</span>
-      </div>
+      </button>
     </div>
     <div class="map-container">
       <ClientOnly>
@@ -91,7 +93,7 @@
 
           <!-- Fire Spread Prediction (Rings) -->
           <template v-if="showPredictions">
-            <template v-for="fire in displayedFires" :key="'pred-' + fire.id">
+            <template v-for="fire in predictionFires" :key="'pred-' + fire.id">
               <LCircle
                 v-for="(ring, ri) in getFireSpreadRings(fire.id)"
                 :key="'ring-' + fire.id + '-' + ri"
@@ -119,7 +121,7 @@
 
           <!-- Fire Spread Timeline Path (dotted lines showing spread over time) -->
           <template v-if="showPredictions">
-            <template v-for="pred in spreadPredictions" :key="'spread-' + pred.fireId">
+            <template v-for="pred in visibleSpreadPredictions" :key="'spread-' + pred.fireId">
               <!-- Timeline path segments: fire center → 1h → 3h → 6h → 12h -->
               <template v-if="pred.timelinePath && pred.timelinePath.length">
                 <LPolyline
@@ -141,10 +143,10 @@
                   </LIcon>
                   <LPopup :options="{ className: 'dark-popup' }">
                     <div class="popup-content">
-                      <div class="popup-name" style="color: #ff4500">🔥 คาดการณ์ลุกลาม +{{ point.hours }} ชม.</div>
+                      <div class="popup-name" style="color: #c2410c">คาดการณ์ลุกลาม +{{ point.hours }} ชม.</div>
                       <div class="popup-stat">
                         <span class="popup-stat-label">ทิศทาง</span>
-                        <span class="popup-stat-value" style="color: #ff4500">{{ pred.windDirection }} ({{ pred.windDeg }}°)</span>
+                        <span class="popup-stat-value" style="color: #ff4500">{{ pred.spreadDirection || pred.windDirection }} ({{ pred.spreadDirectionDeg ?? pred.windDeg }}°)</span>
                       </div>
                       <div class="popup-stat">
                         <span class="popup-stat-label">ระยะจากจุดไฟ</span>
@@ -202,7 +204,7 @@
                 class-name="station-icon-transparent"
               >
                 <div class="fire-marker" :class="fire.intensity">
-                  <span class="fire-marker-icon">🔥</span>
+                  <span class="material-symbols-rounded fire-marker-icon" aria-hidden="true">local_fire_department</span>
                 </div>
               </LIcon>
               <LPopup :options="{ closeButton: true, className: 'dark-popup' }">
@@ -232,31 +234,6 @@
             </LMarker>
           </template>
 
-          <!-- Evacuation Route -->
-          <template v-if="showEvacuation">
-            <LMarker :lat-lng="evacuationTarget">
-              <LIcon :icon-size="[36, 36]" :icon-anchor="[18, 18]">
-                <div class="custom-marker safe">
-                  <span class="custom-marker-icon">🏥</span>
-                  <div class="report-pulse safe" style="animation-duration: 2s; opacity: 0.6"></div>
-                </div>
-              </LIcon>
-              <LPopup :options="{ closeButton: false }">
-                <div class="popup-content">
-                  <div class="popup-name" style="color: var(--color-safe)">ศูนย์พักพิงปลอดภัย</div>
-                  <div class="popup-stat">ศูนย์ประชุมและแสดงสินค้านานาชาติฯ</div>
-                </div>
-              </LPopup>
-            </LMarker>
-
-            <LPolyline
-              :lat-lngs="evacuationRoute"
-              :color="'#10b981'"
-              :weight="4"
-              :dashArray="'10, 10'"
-            />
-          </template>
-
           <!-- Community Report Markers -->
           <template v-if="showReports">
             <LMarker
@@ -270,9 +247,7 @@
                 :popup-anchor="[0, -16]"
               >
                 <div class="custom-marker" :class="report.type === 'fire' ? 'danger' : 'warning'">
-                  <span class="custom-marker-icon">
-                    {{ report.type === 'fire' ? '🔥' : '💧' }}
-                  </span>
+                  <span class="custom-marker-icon material-symbols-rounded" aria-hidden="true">{{ report.type === 'fire' ? 'local_fire_department' : 'flood' }}</span>
                   <div class="report-pulse"></div>
                 </div>
               </LIcon>
@@ -316,11 +291,11 @@
                 :icon-anchor="[14, 14]"
                 class-name="rain-icon-transparent"
               >
-                <div class="rain-emoji">🌧️</div>
+                <div class="rain-emoji"><span class="material-symbols-rounded" aria-hidden="true">rainy</span></div>
               </LIcon>
               <LPopup :options="{ closeButton: true, className: 'dark-popup' }">
                 <div class="popup-content">
-                  <div class="popup-name" style="color: #3b82f6">🌧️ {{ rain.name }}</div>
+                  <div class="popup-name" style="color: #2563eb">{{ rain.name }}</div>
                   <div class="popup-type">{{ rain.amphoe }} {{ rain.province }}</div>
                   <div class="popup-stat">
                     <span class="popup-stat-label">ฝนสะสม 24 ชม.</span>
@@ -343,7 +318,7 @@
                   <div class="popup-stat" v-if="rain.rainDirection">
                     <span class="popup-stat-label">ทิศทางฝน</span>
                     <span class="popup-stat-value" style="color: #2563eb">
-                      → {{ rain.rainDirection }} ({{ rain.windSpeed?.toFixed(1) }} m/s)
+                      → {{ rain.rainDirection }} ({{ rain.windSpeed?.toFixed(1) }} กม./ชม.)
                     </span>
                   </div>
                 </div>
@@ -380,8 +355,8 @@
                   </LIcon>
                   <LPopup :options="{ closeButton: true, className: 'dark-popup' }">
                     <div class="popup-content">
-                      <div class="popup-name" style="color: #2563eb">🌧️ พยากรณ์ {{ rain.name }}</div>
-                      <div class="popup-type">ทิศทาง {{ rain.rainDirection }} • ลม {{ rain.windSpeed?.toFixed(1) }} m/s</div>
+                      <div class="popup-name" style="color: #2563eb">พยากรณ์ {{ rain.name }}</div>
+                      <div class="popup-type">ทิศทาง {{ rain.rainDirection }} • ลม {{ rain.windSpeed?.toFixed(1) }} กม./ชม.</div>
                       <div class="popup-stat">
                         <span class="popup-stat-label">คาดว่าฝนจะเคลื่อนมาถึง</span>
                         <span class="popup-stat-value" style="color: #2563eb">
@@ -448,15 +423,7 @@
       <!-- Map Controls (top-right) -->
       <div class="map-controls">
         <button
-          class="map-control-btn evac-btn"
-          :class="{ active: showEvacuation }"
-          @click="toggleEvacuation"
-          title="ค้นหาเส้นทางอพยพ"
-        >
-          <span class="material-symbols-rounded">route</span>
-          <span class="control-label">อพยพ</span>
-        </button>
-        <button
+          type="button"
           class="map-control-btn report-btn"
           @click="$emit('add-report')"
           title="แจ้งเหตุภัยพิบัติ"
@@ -465,17 +432,21 @@
           <span class="control-label">แจ้งเหตุ</span>
         </button>
         <button
+          type="button"
           class="map-control-btn"
-          :class="{ active: showFires, 'show-all': showAllFires }"
+          :class="{ active: showFires }"
+          :aria-pressed="showFires"
           @click="toggleFires"
-          :title="showAllFires ? 'แสดงเฉพาะ 20 อันดับ' : showFires ? 'แสดงจุดไฟทั้งหมด' : 'แสดงจุดไฟ'"
+          title="แสดงหรือซ่อนจุดความร้อนในประเทศไทย"
         >
           <span class="material-symbols-rounded">local_fire_department</span>
           <span class="control-label">{{ fireButtonLabel }}</span>
         </button>
         <button
+          type="button"
           class="map-control-btn"
           :class="{ active: showPredictions }"
+          :aria-pressed="showPredictions"
           @click="showPredictions = !showPredictions"
           title="แสดงทิศทางลามไฟ (CA + Wind)"
         >
@@ -483,8 +454,10 @@
           <span class="control-label">ทิศลามไฟ</span>
         </button>
         <button
+          type="button"
           class="map-control-btn aqi-btn"
           :class="{ active: showAqi }"
+          :aria-pressed="showAqi"
           @click="showAqi = !showAqi"
           title="แสดง/ซ่อนคุณภาพอากาศ"
         >
@@ -492,8 +465,10 @@
           <span class="control-label">AQI {{ aqiStations.length }}</span>
         </button>
         <button
+          type="button"
           class="map-control-btn"
           :class="{ active: showWater }"
+          :aria-pressed="showWater"
           @click="showWater = !showWater"
           title="แสดง/ซ่อนสถานีน้ำ"
         >
@@ -501,8 +476,10 @@
           <span class="control-label">น้ำ {{ stations.length }}</span>
         </button>
         <button
+          type="button"
           class="map-control-btn rain-btn"
           :class="{ active: showRain }"
+          :aria-pressed="showRain"
           @click="showRain = !showRain"
           title="แสดง/ซ่อนพื้นที่ฝนตก"
         >
@@ -510,8 +487,10 @@
           <span class="control-label">ฝน {{ rainStations.length }}</span>
         </button>
         <button
+          type="button"
           class="map-control-btn rain-dir-btn"
           :class="{ active: showRainDirection }"
+          :aria-pressed="showRainDirection"
           @click="showRainDirection = !showRainDirection"
           title="พยากรณ์ทิศทางฝน 1-3 ชม."
         >
@@ -537,7 +516,7 @@
         </div>
         <div class="legend-divider"></div>
         <div class="legend-item">
-          <span style="font-size: 12px; flex-shrink: 0;">🔥</span>
+          <span class="material-symbols-rounded legend-symbol fire" aria-hidden="true">local_fire_department</span>
           <span>จุดไฟไหม้</span>
         </div>
         <div class="legend-item">
@@ -546,12 +525,12 @@
         </div>
         <div class="legend-divider" v-if="reports.length > 0"></div>
         <div class="legend-item" v-if="reports.length > 0">
-          <span style="font-size: 12px; flex-shrink: 0;">📢</span>
+          <span class="material-symbols-rounded legend-symbol" aria-hidden="true">campaign</span>
           <span>แจ้งเหตุจากชุมชน</span>
         </div>
         <div class="legend-divider"></div>
         <div class="legend-item">
-          <span style="font-size: 12px; flex-shrink: 0;">🌧️</span>
+          <span class="material-symbols-rounded legend-symbol rain" aria-hidden="true">rainy</span>
           <span>ฝนตก (Real-time)</span>
         </div>
         <div class="legend-item" v-if="showRainDirection">
@@ -572,7 +551,7 @@
       <div class="fire-alert-label" v-if="fires.length > 0 && showFires">
         <span class="material-symbols-rounded" style="font-size: 16px; color: #f97316">local_fire_department</span>
         <span style="font-size: 0.72rem; color: #f97316; font-weight: 600;">
-          แสดง {{ displayedFires.length }}/{{ showAllFires ? worldFires.length : fires.length }} จุด
+          แสดง {{ displayedFires.length }} จุดในประเทศไทย
         </span>
       </div>
     </div>
@@ -624,8 +603,8 @@ function flyToResult(result) {
 
 const mapOptions = {
   zoomControl: true,
-  scrollWheelZoom: true,
-  attributionControl: false,
+  scrollWheelZoom: false,
+  attributionControl: true,
 }
 
 // Watch for focusFire changes and pan map
@@ -648,100 +627,46 @@ watch(() => props.focusStation, (newVal) => {
       leafletMap.flyTo([newVal.lat, newVal.lng], 10, {
         duration: 0.8,
       })
-      // Ensure the water station layer is visible
-      if (!showWater.value) {
-        showWater.value = true
-      }
+      if (newVal.layer === 'aqi') showAqi.value = true
+      else showWater.value = true
     }
   }
 })
 
 // === Layer toggles ===
 const showFires = ref(true)
-const showAllFires = ref(true)
-const showPredictions = ref(true)
-const showWater = ref(false)
+const showPredictions = ref(false)
+const showWater = ref(true)
 const showReports = ref(true)
-const showEvacuation = ref(false)
-const showRain = ref(true)
-const showRainDirection = ref(true)
-const showAqi = ref(true)
-
-const userLocation = ref([18.7883, 98.9853]) // Default to Tha Phae Gate
-const evacuationTarget = ref([18.8266, 98.9602]) // Chiang Mai International Exhibition and Convention Centre
-const evacuationRoute = ref([])
-
-function toggleEvacuation() {
-  showEvacuation.value = !showEvacuation.value
-  if (showEvacuation.value) {
-    calculateEvacuationRoute()
-  }
-}
-
-function calculateEvacuationRoute() {
-  // Try to get user's real location if possible
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        userLocation.value = [pos.coords.latitude, pos.coords.longitude]
-        drawRoute()
-      },
-      () => drawRoute() // fallback
-    )
-  } else {
-    drawRoute()
-  }
-}
-
-function drawRoute() {
-  // Simple straight line with a curve to simulate a path
-  // In a real app, integrate Leaflet Routing Machine or OSRM
-  const start = userLocation.value
-  const end = evacuationTarget.value
-  const mid = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2 + 0.01] // add curve
-  
-  evacuationRoute.value = [start, mid, end]
-  
-  if (map.value && map.value.leafletObject) {
-    map.value.leafletObject.flyToBounds(evacuationRoute.value, { padding: [50, 50], duration: 1.5 })
-  }
-}
+const showRain = ref(false)
+const showRainDirection = ref(false)
+const showAqi = ref(false)
 
 function toggleFires() {
-  if (showFires.value && showAllFires.value) {
-    // Thai+World → OFF
-    showFires.value = false
-    showAllFires.value = false
-    showPredictions.value = false
-  } else if (!showFires.value) {
-    // OFF → Thai only
-    showFires.value = true
-    showAllFires.value = false
-    showPredictions.value = true
-  } else {
-    // Thai only → Thai+World
-    showAllFires.value = true
-    showPredictions.value = true
-  }
+  showFires.value = !showFires.value
+  if (!showFires.value) showPredictions.value = false
 }
 
 const fireButtonLabel = computed(() => {
   if (!showFires.value) return 'ไฟ ปิด'
-  if (showAllFires.value) return `ไฟ ทั่วโลก`
-  return `ไฟ (ไทย)`
+  return `ไฟ ${props.fires.length}`
 })
 
 // === Computed data ===
 const displayedFires = computed(() => {
   if (!showFires.value) return []
-  if (showAllFires.value) {
-    // Merge Thai and World fires
-    const thaiIds = new Set(props.fires.map((f) => f.id))
-    const merged = [...props.fires, ...props.worldFires.filter((f) => !thaiIds.has(f.id))]
-    return merged
-  }
-  // Default: Only Thai fires
   return props.fires
+})
+
+const predictionFires = computed(() => {
+  if (!showPredictions.value) return []
+  const selected = props.fires.find(fire => fire.id === props.selectedFireId)
+  return selected ? [selected] : props.fires.slice(0, 1)
+})
+
+const visibleSpreadPredictions = computed(() => {
+  const activeIds = new Set(predictionFires.value.map(fire => fire.id))
+  return props.spreadPredictions.filter(prediction => activeIds.has(prediction.fireId))
 })
 
 const hasFloodRisk = computed(() => {
@@ -978,11 +903,19 @@ function getRainIntensityLabel(intensity) {
 }
 
 .rain-emoji {
-  font-size: 18px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #2563eb;
+  background: rgba(255, 255, 255, .94);
+  border: 2px solid rgba(37, 99, 235, .45);
   text-align: center;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3));
   pointer-events: none;
 }
+.rain-emoji .material-symbols-rounded { font-size: 17px; }
 
 /* Rain direction prediction time badges */
 .rain-time-badge {
@@ -1087,7 +1020,8 @@ function getRainIntensityLabel(intensity) {
 .fire-marker-icon {
   position: relative;
   z-index: 2;
-  font-size: 20px;
+  font-size: 22px;
+  color: #c2410c;
   filter: drop-shadow(0 1px 3px rgba(249, 115, 22, 0.5));
 }
 
@@ -1106,16 +1040,17 @@ function getRainIntensityLabel(intensity) {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid rgba(100, 116, 139, 0.25);
-  border-radius: 6px;
+  min-height: 40px;
+  padding: 7px 11px;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  border-radius: 9px;
   background: rgba(255, 255, 255, 0.95);
   color: #334155;
   cursor: pointer;
   font-size: 0.72rem;
   font-weight: 600;
   font-family: inherit;
-  transition: all 0.2s;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
   white-space: nowrap;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -1163,11 +1098,30 @@ function getRainIntensityLabel(intensity) {
 }
 
 .control-label {
-  font-size: 0.68rem;
+  font-size: 0.7rem;
   letter-spacing: 0.02em;
 }
 
 /* Legend additions */
+.map-overlay {
+  position: absolute;
+  left: .75rem;
+  bottom: .75rem;
+  z-index: 900;
+  min-width: 170px;
+  padding: .7rem .8rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 3px 14px rgba(15, 23, 42, .12);
+  backdrop-filter: blur(8px);
+}
+.map-overlay-title { color: var(--text-primary); font-size: .7rem; font-weight: 800; margin-bottom: .35rem; }
+.legend-item { display: flex; align-items: center; gap: .45rem; min-height: 24px; font-size: .66rem; }
+.legend-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
+.legend-symbol { flex: 0 0 auto; color: var(--accent); font-size: 16px; }
+.legend-symbol.fire { color: #c2410c; }.legend-symbol.rain { color: #2563eb; }
 .legend-divider {
   height: 1px;
   background: rgba(100, 116, 139, 0.15);
@@ -1337,7 +1291,11 @@ function getRainIntensityLabel(intensity) {
   border: none;
   cursor: pointer;
   color: var(--text-muted);
-  padding: 2px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
   display: flex;
   font-size: 16px;
   line-height: 1;
@@ -1359,6 +1317,7 @@ function getRainIntensityLabel(intensity) {
 }
 
 .map-search-result-item {
+  width: 100%;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -1366,6 +1325,8 @@ function getRainIntensityLabel(intensity) {
   cursor: pointer;
   font-size: 0.78rem;
   color: var(--text-primary);
+  background: #ffffff;
+  border: 0;
   border-bottom: 1px solid var(--border-subtle);
   transition: background 0.15s;
 }
@@ -1393,6 +1354,8 @@ function getRainIntensityLabel(intensity) {
   background: rgba(51, 65, 85, 0.5);
 }
 
+[data-theme="dark"] .map-search-result-item { background: #1e293b; }
+
 /* Dark mode for map controls */
 [data-theme="dark"] .map-control-btn {
   background: rgba(30, 41, 59, 0.95);
@@ -1408,6 +1371,16 @@ function getRainIntensityLabel(intensity) {
 [data-theme="dark"] .map-overlay {
   background: rgba(30, 41, 59, 0.95);
   border-color: rgba(71, 85, 105, 0.4);
+}
+
+@media (max-width: 700px) {
+  .map-search-bar { left: 8px; right: 8px; top: 8px; max-width: none; width: auto; min-height: 44px; }
+  .map-search-results { left: 8px; right: 8px; top: 54px; max-width: none; width: auto; }
+  .map-controls { top: auto; left: 8px; right: 8px; bottom: 8px; flex-direction: row; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  .map-controls::-webkit-scrollbar { display: none; }
+  .map-control-btn { flex: 0 0 auto; min-height: 44px; background: rgba(255, 255, 255, .97); }
+  .map-overlay { display: none; }
+  .flow-direction-label, .fire-alert-label { display: none; }
 }
 
 [data-theme="dark"] .station-pin {

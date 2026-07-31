@@ -5,22 +5,21 @@
         <span class="material-symbols-rounded">local_fire_department</span>
       </div>
       <div>
-        <div class="card-title" style="margin-bottom: 0">🔥 คาดการณ์การลุกลามของไฟ</div>
+        <div class="card-title" style="margin-bottom: 0">คาดการณ์การลุกลามของไฟ</div>
         <div style="font-size: 0.7rem; color: var(--text-muted)">จำนวน {{ fires.length }} จุด</div>
       </div>
     </div>
 
     <!-- Fire selector tabs (limited with show more) -->
-    <div class="fire-tabs" v-if="fires.length > 0" role="tablist" aria-label="รายการจุดไฟไหม้">
+    <div class="fire-tabs" v-if="fires.length > 0" role="list" aria-label="รายการจุดความร้อน">
       <button
         v-for="fire in visibleFires"
         :key="fire.id"
-        role="tab"
-        :aria-selected="selectedFireId === fire.id"
-        :aria-controls="`fire-panel-${fire.id}`"
+        type="button"
+        :aria-pressed="selectedFireId === fire.id"
         class="fire-tab"
         :class="{ active: selectedFireId === fire.id, [fire.intensity]: true }"
-        @click="openFirePopup(fire)"
+        @click="openFirePopup(fire, $event)"
       >
         <span class="fire-tab-dot" :class="fire.intensity"></span>
         {{ fire.name }}
@@ -48,15 +47,15 @@
     <!-- POPUP MODAL for fire details -->
     <Teleport to="body">
       <Transition name="popup">
-        <div v-if="popupFire" class="fire-popup-overlay" @click.self="closePopup">
-          <div class="fire-popup">
+        <div v-if="popupFire" class="fire-popup-overlay" @click.self="closePopup" @keydown.esc="closePopup">
+          <div ref="popupDialog" class="fire-popup" role="dialog" aria-modal="true" aria-labelledby="fire-popup-title" tabindex="-1">
             <div class="fire-popup-header">
-              <div class="fire-popup-title">
-                <span style="font-size: 20px">🔥</span>
+              <div id="fire-popup-title" class="fire-popup-title">
+                <span class="material-symbols-rounded" aria-hidden="true">local_fire_department</span>
                 {{ popupFire.name }}
               </div>
-              <button class="popup-close" @click="closePopup">
-                <span class="material-symbols-rounded">close</span>
+              <button ref="closeButton" type="button" class="popup-close" aria-label="ปิดรายละเอียดจุดความร้อน" @click="closePopup">
+                <span class="material-symbols-rounded" aria-hidden="true">close</span>
               </button>
             </div>
 
@@ -79,7 +78,8 @@
                   {{ getIntensityLabel(popupFire.intensity) }}
                 </span>
                 <span class="fire-status-badge">
-                  {{ popupFire.status === 'active' ? '🔴 กำลังลุกไหม้' : '🟢 ควบคุมได้แล้ว' }}
+                  <span class="material-symbols-rounded" aria-hidden="true">{{ popupFire.status === 'active' ? 'radio_button_checked' : 'check_circle' }}</span>
+                  {{ popupFire.status === 'active' ? 'กำลังติดตาม' : 'ควบคุมได้แล้ว' }}
                 </span>
               </div>
 
@@ -170,6 +170,9 @@ const emit = defineEmits(['selectFire'])
 
 const showAllFires = ref(false)
 const popupFire = ref(null)
+const popupDialog = ref(null)
+const closeButton = ref(null)
+let lastTrigger = null
 
 const visibleFires = computed(() => {
   if (showAllFires.value) return props.fires
@@ -183,13 +186,16 @@ const popupPredictions = computed(() => {
   )
 })
 
-function openFirePopup(fire) {
+function openFirePopup(fire, event) {
+  lastTrigger = event?.currentTarget || null
   popupFire.value = fire
   emit('selectFire', fire.id)
+  nextTick(() => closeButton.value?.focus())
 }
 
 function closePopup() {
   popupFire.value = null
+  nextTick(() => lastTrigger?.focus())
 }
 
 function flyToFire() {
@@ -201,10 +207,10 @@ function flyToFire() {
 
 function getIntensityLabel(intensity) {
   switch (intensity) {
-    case 'extreme': return '🔥 รุนแรงมาก'
-    case 'high': return '🔥 รุนแรง'
-    case 'medium': return '⚠️ ปานกลาง'
-    case 'low': return '✅ เบา'
+    case 'extreme': return 'รุนแรงมาก'
+    case 'high': return 'รุนแรง'
+    case 'medium': return 'ปานกลาง'
+    case 'low': return 'ระดับต่ำ'
     default: return ''
   }
 }

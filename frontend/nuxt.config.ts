@@ -3,6 +3,14 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: false },
   modules: ['@nuxtjs/leaflet', '@vite-pwa/nuxt'],
+  hooks: {
+    // @nuxtjs/leaflet injects its CSS as a server stylesheet. On Windows dev
+    // that bare path can be emitted more than once and one copy resolves to a
+    // 404 URL. The main stylesheet imports it once before the map mounts.
+    ready(nuxt) {
+      nuxt.options.css = nuxt.options.css.filter(entry => entry !== 'leaflet/dist/leaflet.css')
+    },
+  },
   vite: {
     ssr: {
       external: ['@prisma/client']
@@ -13,9 +21,9 @@ export default defineNuxtConfig({
     manifest: {
       name: 'Thailand Disaster Watch',
       short_name: 'TH Disaster',
-      description: 'ระบบพยากรณ์มวลน้ำและเตือนภัยน้ำท่วมด้วย AI',
-      theme_color: '#030712',
-      background_color: '#030712',
+      description: 'ระบบติดตามน้ำ ไฟป่า ฝุ่น PM2.5 ฝน และแนวโน้มสถานการณ์ทั่วประเทศไทย',
+      theme_color: '#ffffff',
+      background_color: '#f4f7fb',
       display: 'standalone',
       icons: [
         {
@@ -32,25 +40,41 @@ export default defineNuxtConfig({
     },
     workbox: {
       navigateFallback: '/',
-      globPatterns: ['**/*.{js,css,html,png,svg,ico}']
+      globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
+      cleanupOutdatedCaches: true,
+      clientsClaim: true,
+      skipWaiting: true,
+      runtimeCaching: [
+        {
+          urlPattern: /\/api\/dashboard\//,
+          handler: 'NetworkFirst',
+          options: {
+            cacheName: 'dashboard-api',
+            networkTimeoutSeconds: 5,
+            expiration: { maxEntries: 30, maxAgeSeconds: 600 },
+            cacheableResponse: { statuses: [0, 200] },
+          },
+        },
+      ],
     },
     devOptions: {
-      enabled: true,
+      enabled: false,
       type: 'module'
     }
   },
   app: {
     head: {
-      title: 'Thailand Disaster Watch — ระบบเฝ้าระวังภัยพิบัติทั่วประเทศ',
+      htmlAttrs: { lang: 'th' },
+      title: 'Thailand Disaster Watch — น้ำ ไฟ ฝุ่น และพยากรณ์',
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { name: 'description', content: 'ระบบพยากรณ์มวลน้ำและเตือนภัยน้ำท่วมทั่วประเทศด้วย AI และ Open Data' },
+        { name: 'description', content: 'ติดตามระดับน้ำ จุดความร้อน ฝน PM2.5 และแนวโน้มสถานการณ์ทั่วประเทศไทยจาก Open Data' },
       ],
       link: [
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
-        { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Noto+Sans+Thai:wght@300;400;500;600;700;800;900&display=swap' },
+        { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap' },
         { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0' },
       ],
     },

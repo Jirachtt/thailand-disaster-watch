@@ -2,21 +2,36 @@
   <div class="chatbot-container">
     <!-- Chat Window -->
     <Transition name="slide-up">
-      <div v-if="isOpen" class="chat-window glass-card">
+      <div
+        v-if="isOpen"
+        id="chat-assistant-panel"
+        class="chat-window glass-card"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="chat-assistant-title"
+        @keydown.esc="closeChat"
+      >
         <div class="chat-header">
           <div class="header-info">
-            <span class="material-symbols-rounded">robot_2</span>
+            <span class="material-symbols-rounded" aria-hidden="true">robot_2</span>
             <div>
-              <h3 style="margin: 0; font-size: 1rem;">Disaster AI Assistant</h3>
+              <h3 id="chat-assistant-title" style="margin: 0; font-size: 1rem;">ผู้ช่วยข้อมูลภัยพิบัติ</h3>
               <p style="margin: 0; font-size: 0.75rem; color: var(--text-muted)">ถามข่าวสารน้ำท่วม/ไฟป่าได้เลย</p>
             </div>
           </div>
-          <button class="icon-btn" @click="isOpen = false">
-            <span class="material-symbols-rounded">close</span>
+          <button type="button" class="icon-btn" aria-label="ปิดผู้ช่วยข้อมูล" @click="closeChat">
+            <span class="material-symbols-rounded" aria-hidden="true">close</span>
           </button>
         </div>
 
-        <div class="chat-messages" ref="messagesContainer">
+        <div
+          ref="messagesContainer"
+          class="chat-messages"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          :aria-busy="isLoading"
+        >
           <div 
             v-for="(msg, index) in messages" 
             :key="index"
@@ -29,25 +44,28 @@
           </div>
           
           <div v-if="isLoading" class="message-wrapper assistant">
-            <div class="message-bubble loading-bubble">
-              <span class="typing-dot"></span>
-              <span class="typing-dot"></span>
-              <span class="typing-dot"></span>
+            <div class="message-bubble loading-bubble" aria-label="กำลังค้นหาคำตอบ">
+              <span class="typing-dot" aria-hidden="true"></span>
+              <span class="typing-dot" aria-hidden="true"></span>
+              <span class="typing-dot" aria-hidden="true"></span>
             </div>
           </div>
         </div>
 
         <div class="chat-input-area">
+          <p class="chat-disclaimer">ไม่ใช้แทนประกาศฉุกเฉินจากหน่วยงานรัฐ</p>
           <form @submit.prevent="sendMessage" style="display: flex; gap: 8px; width: 100%;">
             <input 
+              ref="chatInput"
               v-model="inputMsg" 
               type="text" 
               placeholder="พิมพ์คำถามที่นี่..." 
+              aria-label="คำถามถึงผู้ช่วยข้อมูลภัยพิบัติ"
               :disabled="isLoading"
               class="chat-input"
             />
-            <button type="submit" class="send-btn" :disabled="!inputMsg.trim() || isLoading">
-              <span class="material-symbols-rounded">send</span>
+            <button type="submit" class="send-btn" aria-label="ส่งคำถาม" :disabled="!inputMsg.trim() || isLoading">
+              <span class="material-symbols-rounded" aria-hidden="true">send</span>
             </button>
           </form>
         </div>
@@ -56,13 +74,16 @@
 
     <!-- Floating Action Button -->
     <button 
+      ref="fabButton"
+      type="button"
       class="chat-fab" 
-      @click="isOpen = !isOpen"
+      @click="toggleChat"
       :class="{ 'is-open': isOpen }"
-      aria-label="เปิดผู้ช่วย AI"
+      :aria-label="isOpen ? 'ปิดผู้ช่วยข้อมูล' : 'เปิดผู้ช่วยข้อมูล'"
+      :aria-expanded="isOpen"
+      aria-controls="chat-assistant-panel"
     >
-      <span class="material-symbols-rounded" v-if="!isOpen">chat</span>
-      <span class="material-symbols-rounded" v-else>keyboard_arrow_down</span>
+      <span class="material-symbols-rounded" aria-hidden="true">{{ isOpen ? 'keyboard_arrow_down' : 'chat' }}</span>
     </button>
   </div>
 </template>
@@ -72,11 +93,13 @@ const isOpen = ref(false)
 const inputMsg = ref('')
 const isLoading = ref(false)
 const messagesContainer = ref(null)
+const chatInput = ref(null)
+const fabButton = ref(null)
 
 const messages = ref([
   {
     role: 'assistant',
-    content: 'สวัสดีครับ ผมคือ AI ผู้ช่วยเฝ้าระวังภัยพิบัติระดับประเทศ มีอะไรให้ผมช่วยสืบค้นข้อมูลน้ำท่วมหรือไฟป่าไหมครับ?'
+    content: 'สวัสดีครับ ผมช่วยสรุปข้อมูลน้ำ ไฟป่า และคุณภาพอากาศบนแดชบอร์ดนี้ได้ ต้องการดูเรื่องใดครับ?'
   }
 ])
 
@@ -90,27 +113,50 @@ async function sendMessage() {
   scrollToBottom()
   
   try {
-    const { data, error } = await useFetch('/api/chat', {
+    const data = await $fetch('/api/chat', {
       method: 'POST',
-      body: { message: userMsg }
+      body: { message: userMsg },
+      timeout: 20000,
     })
-    
-    if (error.value) throw error.value
-    
+
     messages.value.push({ 
       role: 'assistant', 
-      content: data.value?.response || 'ขออภัยครับ เกิดข้อผิดพลาดในการประมวลผล'
+      content: normalizeAssistantText(data?.response || 'ขออภัยครับ ยังไม่สามารถประมวลผลคำถามนี้ได้')
     })
   } catch (err) {
     console.error(err)
     messages.value.push({ 
       role: 'assistant', 
-      content: 'ระบบ AI ขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งครับ ⚠️'
+      content: 'ผู้ช่วยข้อมูลขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งครับ'
     })
   } finally {
     isLoading.value = false
     scrollToBottom()
   }
+}
+
+function normalizeAssistantText(value) {
+  return String(value)
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]\u{FE0F}?/gu, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim()
+}
+
+async function toggleChat() {
+  isOpen.value = !isOpen.value
+  if (isOpen.value) {
+    await nextTick()
+    chatInput.value?.focus()
+  }
+}
+
+async function closeChat() {
+  isOpen.value = false
+  await nextTick()
+  fabButton.value?.focus()
 }
 
 function scrollToBottom() {
@@ -227,7 +273,7 @@ function scrollToBottom() {
 
 .user .message-bubble {
   background: var(--accent);
-  color: #030712;
+  color: #ffffff;
   border-bottom-right-radius: 4px;
 }
 
@@ -246,6 +292,13 @@ function scrollToBottom() {
   padding: 12px;
   border-top: 1px solid var(--border-subtle);
   background: rgba(0, 0, 0, 0.2);
+}
+
+.chat-disclaimer {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
 }
 
 [data-theme="light"] .chat-input-area {
@@ -269,7 +322,7 @@ function scrollToBottom() {
 
 .send-btn {
   background: var(--accent);
-  color: #030712;
+  color: #ffffff;
   border: none;
   width: 40px;
   height: 40px;

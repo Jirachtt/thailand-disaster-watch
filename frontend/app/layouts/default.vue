@@ -1,74 +1,72 @@
 <template>
   <div class="app-layout">
+    <a class="skip-link" href="#main-content">ข้ามไปยังเนื้อหาหลัก</a>
     <header class="app-header">
       <div class="header-inner">
-        <div class="logo-area">
-          <div class="logo-icon">🛡️</div>
-          <div>
-            <div class="logo-text">Thailand Disaster Watch</div>
-            <div class="logo-subtitle">ระบบเฝ้าระวังภัยพิบัติทั่วประเทศ — Real-Time Data</div>
-          </div>
-        </div>
+        <NuxtLink to="/" class="logo-area" aria-label="Thailand Disaster Watch หน้าหลัก">
+          <span class="logo-icon" aria-hidden="true"><span class="material-symbols-rounded">shield</span></span>
+          <span class="brand-copy">
+            <strong class="logo-text">Thailand Disaster Watch</strong>
+            <span class="logo-subtitle">ระบบติดตามน้ำ ไฟ ฝุ่น และพยากรณ์</span>
+          </span>
+        </NuxtLink>
         <div class="header-status">
-          <button 
-            class="theme-toggle" 
-            @click="toggleTheme" 
-            :title="isDarkMode ? 'เปลี่ยนเป็นโหมดสว่าง' : 'เปลี่ยนเป็นโหมดมืด'"
-          >
-            <span class="material-symbols-rounded">{{ isDarkMode ? 'light_mode' : 'dark_mode' }}</span>
-          </button>
-          <div class="live-badge">
-            <span class="live-dot"></span>
-            LIVE
+          <div class="header-time">
+            <span class="material-symbols-rounded" aria-hidden="true">schedule</span>
+            <span>{{ currentTime }}</span>
           </div>
-          <div class="header-time">{{ currentTime }}</div>
+          <button
+            class="theme-toggle"
+            type="button"
+            :aria-label="isDarkMode ? 'เปลี่ยนเป็นโหมดสว่าง' : 'เปลี่ยนเป็นโหมดมืด'"
+            :aria-pressed="isDarkMode"
+            @click="toggleTheme"
+          >
+            <span class="material-symbols-rounded" aria-hidden="true">{{ isDarkMode ? 'light_mode' : 'dark_mode' }}</span>
+          </button>
         </div>
       </div>
     </header>
-    <main class="main-content">
+    <main id="main-content" class="main-content" tabindex="-1">
       <slot />
     </main>
+    <footer class="app-footer">
+      <p>Thailand Disaster Watch · ข้อมูลเพื่อการเฝ้าระวัง โปรดติดตามประกาศทางการเมื่อเกิดเหตุฉุกเฉิน</p>
+    </footer>
     <ChatbotWidget />
   </div>
 </template>
 
 <script setup>
 const currentTime = ref('')
-let timer = null
 const isDarkMode = ref(false)
+let timer = null
+
+function applyTheme(theme) {
+  isDarkMode.value = theme === 'dark'
+  document.documentElement.setAttribute('data-theme', theme)
+  document.documentElement.style.colorScheme = theme
+}
 
 function toggleTheme() {
-  isDarkMode.value = !isDarkMode.value
-  document.documentElement.setAttribute('data-theme', isDarkMode.value ? 'dark' : 'light')
-  localStorage.setItem('theme', isDarkMode.value ? 'dark' : 'light')
+  const nextTheme = isDarkMode.value ? 'light' : 'dark'
+  applyTheme(nextTheme)
+  localStorage.setItem('theme', nextTheme)
 }
 
 function updateTime() {
-  const now = new Date()
-  currentTime.value = now.toLocaleString('th-TH', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
+  currentTime.value = new Date().toLocaleString('th-TH', {
+    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
   })
 }
 
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme')
-  if (savedTheme === 'dark') {
-    isDarkMode.value = true
-    document.documentElement.setAttribute('data-theme', 'dark')
-  } else {
-    isDarkMode.value = false
-    document.documentElement.setAttribute('data-theme', 'light')
-  }
+  const preferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  applyTheme(savedTheme || preferredTheme)
   updateTime()
-  timer = setInterval(updateTime, 1000)
+  timer = setInterval(updateTime, 60000)
 })
 
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-})
+onUnmounted(() => clearInterval(timer))
 </script>
