@@ -400,18 +400,18 @@
               <LPopup :options="{ closeButton: true, className: 'dark-popup' }">
                 <div class="popup-content">
                   <div class="popup-name" :style="{ color: aqi.color }">{{ aqi.name }}</div>
-                  <div class="popup-type">{{ aqi.nameEn }} • AQI</div>
+                  <div class="popup-type">สถานีจริง AQICN • {{ aqi.stationName || aqi.nameEn }}</div>
                   <div class="popup-stat">
                     <span class="popup-stat-label">AQI</span>
                     <span class="popup-stat-value" :style="{ color: aqi.color }">{{ aqi.aqi }} ({{ aqi.label }})</span>
                   </div>
-                  <div class="popup-stat" v-if="aqi.pm25">
-                    <span class="popup-stat-label">PM2.5</span>
-                    <span class="popup-stat-value">{{ aqi.pm25 }} µg/m³</span>
+                  <div class="popup-stat" v-if="aqi.pm25Aqi != null">
+                    <span class="popup-stat-label">PM2.5 AQI</span>
+                    <span class="popup-stat-value">{{ aqi.pm25Aqi }} (ดัชนีรายมลพิษ)</span>
                   </div>
-                  <div class="popup-stat" v-if="aqi.temp">
-                    <span class="popup-stat-label">อุณหภูมิ</span>
-                    <span class="popup-stat-value">{{ aqi.temp }}°C</span>
+                  <div class="popup-stat" v-if="aqi.pm10Aqi != null">
+                    <span class="popup-stat-label">PM10 AQI</span>
+                    <span class="popup-stat-value">{{ aqi.pm10Aqi }} (ดัชนีรายมลพิษ)</span>
                   </div>
                 </div>
               </LPopup>

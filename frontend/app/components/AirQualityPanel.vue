@@ -56,16 +56,31 @@
             <strong>{{ selectedStation.aqi }}</strong>
             <small>{{ selectedStation.label }}</small>
           </div>
+          <div class="station-observation">
+            <div class="observation-heading">
+              <span class="data-kind measured">ตรวจวัดจริง</span>
+              <span>AQICN</span>
+            </div>
+            <strong>{{ selectedStation.stationName || selectedStation.name }}</strong>
+            <p>
+              อัปเดต {{ formatDateTime(selectedStation.time) }}
+              <template v-if="selectedStation.stationDistanceKm != null"> · ห่างจุดอ้างอิง {{ formatDistance(selectedStation.stationDistanceKm) }} กม.</template>
+            </p>
+            <a v-if="selectedStation.sourceUrl" :href="selectedStation.sourceUrl" target="_blank" rel="noopener noreferrer">
+              ดูสถานีและแหล่งที่มา
+              <span class="material-symbols-rounded" aria-hidden="true">open_in_new</span>
+            </a>
+          </div>
           <div class="air-metrics">
             <div>
-              <span>PM2.5</span>
-              <strong>{{ formatMetric(selectedStation.pm25) }}</strong>
-              <small>µg/m³</small>
+              <span>PM2.5 AQI</span>
+              <strong>{{ formatIndex(selectedStation.pm25Aqi) }}</strong>
+              <small>ดัชนีรายมลพิษ</small>
             </div>
             <div>
-              <span>PM10</span>
-              <strong>{{ formatMetric(selectedStation.pm10) }}</strong>
-              <small>µg/m³</small>
+              <span>PM10 AQI</span>
+              <strong>{{ formatIndex(selectedStation.pm10Aqi) }}</strong>
+              <small>ดัชนีรายมลพิษ</small>
             </div>
           </div>
           <div class="health-advice" :style="{ borderColor: selectedStation.color }">
@@ -85,14 +100,14 @@
           <div class="forecast-heading">
             <div>
               <h3>พยากรณ์ AQI 24 ชั่วโมง</h3>
-              <p>แบบจำลอง CAMS ทุก 3 ชั่วโมง</p>
+              <p><span class="data-kind model">แบบจำลอง</span> Open-Meteo CAMS ทุก 3 ชั่วโมง · {{ forecastStatusLabel }}</p>
             </div>
             <span class="forecast-trend" :class="forecastTrend.className">
               <span class="material-symbols-rounded" aria-hidden="true">{{ forecastTrend.icon }}</span>
               {{ forecastTrend.label }}
             </span>
           </div>
-          <div class="aqi-bars" role="img" :aria-label="forecastAriaLabel">
+          <div v-if="selectedForecast.length" class="aqi-bars" role="img" :aria-label="forecastAriaLabel">
             <div v-for="point in selectedForecast" :key="point.time" class="aqi-bar-column">
               <span class="aqi-bar-value">{{ point.aqi }}</span>
               <div class="aqi-bar-track">
@@ -104,11 +119,11 @@
               <time :datetime="point.time">{{ formatTime(point.time) }}</time>
             </div>
           </div>
-          <details class="forecast-table-details">
+          <details v-if="selectedForecast.length" class="forecast-table-details">
             <summary>ดูข้อมูลพยากรณ์แบบตาราง</summary>
             <div class="table-scroll">
               <table>
-                <thead><tr><th>เวลา</th><th>AQI</th><th>PM2.5</th><th>PM10</th><th>ระดับ</th></tr></thead>
+                <thead><tr><th>เวลา</th><th>AQI</th><th>PM2.5 (µg/m³)</th><th>PM10 (µg/m³)</th><th>ระดับ</th></tr></thead>
                 <tbody>
                   <tr v-for="point in selectedForecast" :key="`table-${point.time}`">
                     <td>{{ formatDateTime(point.time) }}</td>
@@ -121,6 +136,11 @@
               </table>
             </div>
           </details>
+          <div v-else class="forecast-empty">
+            <span class="material-symbols-rounded" aria-hidden="true">cloud_off</span>
+            <strong>พยากรณ์ CAMS ใช้งานไม่ได้ชั่วคราว</strong>
+            <p>ค่าตรวจวัด AQICN ด้านซ้ายยังเป็นข้อมูลสถานีจริง ระบบไม่ได้สร้างค่าพยากรณ์ทดแทน</p>
+          </div>
         </div>
       </div>
     </template>
@@ -132,6 +152,7 @@ const props = defineProps({
   stations: { type: Array, default: () => [] },
   status: { type: String, default: 'loading' },
   source: { type: String, default: '' },
+  forecastStatus: { type: String, default: 'loading' },
   pending: { type: Boolean, default: false },
   error: { type: [Object, String], default: null },
 })
@@ -159,11 +180,17 @@ const selectedForecast = computed(() => selectedStation.value?.forecast || [])
 const maxForecastAqi = computed(() => Math.max(100, ...selectedForecast.value.map(point => Number(point.aqi) || 0)))
 
 const statusText = computed(() => ({
-  live: 'ข้อมูลแบบจำลองล่าสุด',
-  stale: 'ข้อมูลที่บันทึกไว้',
+  live: 'สถานีตรวจวัดล่าสุด',
+  stale: 'ข้อมูลสถานีเดิม',
   error: 'เชื่อมต่อไม่ได้',
   loading: 'กำลังโหลด',
 }[normalizedStatus.value] || 'รอตรวจสอบ'))
+const forecastStatusLabel = computed(() => ({
+  live: 'ล่าสุด',
+  stale: 'ข้อมูลแบบจำลองเดิม',
+  error: 'เชื่อมต่อไม่ได้',
+  loading: 'กำลังโหลด',
+}[props.forecastStatus] || 'รอตรวจสอบ'))
 
 const healthAdvice = computed(() => {
   const aqi = Number(selectedStation.value?.aqi) || 0
@@ -187,7 +214,13 @@ const forecastAriaLabel = computed(() => selectedForecast.value
   .map(point => `${formatTime(point.time)} AQI ${point.aqi}`)
   .join(', '))
 
-function formatMetric(value) {
+function formatIndex(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  return Number.isFinite(Number(value)) ? Math.round(Number(value)) : '—'
+}
+
+function formatDistance(value) {
+  if (value === null || value === undefined || value === '') return '—'
   return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : '—'
 }
 
@@ -200,7 +233,9 @@ function formatTime(value) {
 }
 
 function formatDateTime(value) {
-  return new Date(value).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return 'ไม่ทราบเวลา'
+  return date.toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 </script>
 
@@ -217,6 +252,16 @@ function formatDateTime(value) {
 .aqi-orb span { color: var(--text-muted); font-size: .8rem; font-weight: 700; letter-spacing: .08em; }
 .aqi-orb strong { color: var(--aqi-color); font-size: 2.4rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .aqi-orb small { font-weight: 700; }
+.station-observation { display: grid; gap: .35rem; border: 1px solid var(--border-subtle); background: var(--bg-primary); border-radius: 12px; padding: .85rem; }
+.station-observation > strong { font-size: .84rem; line-height: 1.45; }
+.station-observation p { color: var(--text-muted); font-size: .72rem; line-height: 1.5; }
+.station-observation a { width: fit-content; display: inline-flex; align-items: center; gap: .25rem; color: var(--accent); font-size: .74rem; font-weight: 700; text-decoration: none; }
+.station-observation a:hover { text-decoration: underline; }
+.station-observation a .material-symbols-rounded { font-size: 15px; }
+.observation-heading { display: flex; align-items: center; gap: .45rem; color: var(--text-muted); font-size: .72rem; }
+.data-kind { display: inline-flex; align-items: center; width: fit-content; padding: .16rem .45rem; border-radius: 999px; font-size: .66rem; font-weight: 800; line-height: 1.35; }
+.data-kind.measured { color: #166534; background: #dcfce7; }
+.data-kind.model { color: #1d4ed8; background: #dbeafe; vertical-align: middle; margin-right: .2rem; }
 .air-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
 .air-metrics > div { border: 1px solid var(--border-subtle); background: var(--bg-primary); border-radius: 12px; padding: .8rem; display: grid; }
 .air-metrics span, .air-metrics small { color: var(--text-muted); font-size: .75rem; }
@@ -243,6 +288,10 @@ function formatDateTime(value) {
 .aqi-bar-column time { color: var(--text-muted); font-size: .7rem; white-space: nowrap; }
 .forecast-table-details { margin-top: 1rem; color: var(--text-secondary); font-size: .8rem; }
 .forecast-table-details summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--accent); font-weight: 700; }
+.forecast-empty { min-height: 220px; display: grid; place-content: center; justify-items: center; gap: .5rem; border: 1px dashed var(--border-subtle); border-radius: 14px; padding: 1.5rem; text-align: center; }
+.forecast-empty .material-symbols-rounded { color: var(--text-muted); font-size: 32px; }
+.forecast-empty strong { font-size: .9rem; }
+.forecast-empty p { max-width: 440px; color: var(--text-muted); font-size: .78rem; line-height: 1.55; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: .55rem; border-bottom: 1px solid var(--border-subtle); text-align: left; white-space: nowrap; }

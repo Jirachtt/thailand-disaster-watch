@@ -26,17 +26,20 @@ Copy `.env.example` to `.env` and set the NASA FIRMS key on the server:
 
 ```dotenv
 FIRMS_MAP_KEY=your_firms_map_key
+AQICN_API_TOKEN=your_aqicn_token
 ```
 
 `FIRMS_MAP_KEY` is required for live fire hotspots. Water and rainfall use the
-public ThaiWater API; PM2.5/AQI and weather inputs use the public Open-Meteo
-APIs. The dashboard does not generate replacement incidents when an upstream
-API is unavailable—it reports that source as unavailable instead.
+public ThaiWater API. Current AQI comes from real AQICN monitoring stations and
+requires `AQICN_API_TOKEN`; the 24-hour air-quality forecast comes separately
+from the Open-Meteo CAMS model. The dashboard does not generate replacement
+incidents when an upstream API is unavailable—it reports that source as
+unavailable instead.
 
-Keep `.env` local and never commit it. For production, add `FIRMS_MAP_KEY` in
-the hosting provider's environment-variable settings before building or
-starting the Nuxt server. A normal `git pull` will not remove the ignored local
-`.env` file.
+Keep `.env` local and never commit it. For production, add `FIRMS_MAP_KEY` and
+`AQICN_API_TOKEN` in the hosting provider's environment-variable settings
+before building or starting the Nuxt server. Mark both values as sensitive. A
+normal `git pull` will not remove the ignored local `.env` file.
 
 ## Development Server
 

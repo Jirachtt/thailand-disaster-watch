@@ -71,7 +71,7 @@
           <strong v-if="worstAqiStation"><span :style="{ color: worstAqiStation.color }">{{ worstAqi }}</span> <small>AQI · {{ worstAqiCity }}</small></strong>
           <span v-else-if="pendingAqi" class="skeleton-line short"></span>
           <strong v-else>— <small>ยังไม่มีข้อมูล</small></strong>
-          <span class="overview-meta">PM2.5 {{ worstAqiStation?.pm25 ?? '—' }} µg/m³ · {{ statusShortLabel(aqiStatus) }}</span>
+          <span class="overview-meta">PM2.5 AQI {{ worstAqiStation?.pm25Aqi ?? '—' }} · สถานีจริง · {{ statusShortLabel(aqiStatus) }}</span>
         </span>
         <span class="overview-arrow material-symbols-rounded" aria-hidden="true">arrow_forward</span>
       </button>
@@ -222,6 +222,7 @@
         :stations="aqiStationsList"
         :status="aqiStatus"
         :source="aqiData?.source"
+        :forecast-status="aqiData?.forecastStatus"
         :pending="pendingAqi"
         :error="errorAqi"
         @focus="focusAqiStation"
@@ -369,7 +370,7 @@ const sourceRows = computed(() => [
   { key: 'water', label: 'ระดับน้ำ', icon: 'water_drop', status: waterStatus.value, source: dashboard.value?.source || 'ThaiWater', timestamp: dashboard.value?.timestamp },
   { key: 'fire', label: 'จุดความร้อน', icon: 'local_fire_department', status: fireStatus.value, source: fireDashboard.value?.source || 'NASA FIRMS', timestamp: fireDashboard.value?.timestamp },
   { key: 'rain', label: 'ปริมาณฝน', icon: 'rainy', status: rainStatus.value, source: rainData.value?.source || 'ThaiWater', timestamp: rainData.value?.timestamp },
-  { key: 'air', label: 'PM2.5 / AQI', icon: 'air', status: aqiStatus.value, source: aqiData.value?.source || 'Open-Meteo CAMS', timestamp: aqiData.value?.timestamp },
+  { key: 'air', label: 'PM2.5 / AQI', icon: 'air', status: aqiStatus.value, source: aqiData.value?.source || 'AQICN + Open-Meteo CAMS', timestamp: aqiData.value?.timestamp },
 ].map(source => ({ ...source, time: source.timestamp ? formatRelativeTime(new Date(source.timestamp).getTime()) : 'ยังไม่อัปเดต' })))
 
 const topFireForecast = computed(() => firesList.value.find(fire => fire.status === 'active') || firesList.value[0] || null)
@@ -386,7 +387,11 @@ const fireForecastHeadline = computed(() => topFireForecast.value?.peakEstimate 
 const fireForecastDetail = computed(() => topFireForecast.value?.peakEstimate ? `${topFireForecast.value.name} · ประมาณการใน ${topFireForecast.value.peakEstimate.timeHours} ชม. จากข้อมูล FIRMS และสภาพอากาศจริง` : fireStatus.value === 'error' ? 'เชื่อมต่อ NASA FIRMS ไม่ได้' : 'แบบจำลองจะเริ่มเมื่อมีจุดความร้อนและข้อมูลสภาพอากาศจริง')
 const airForecastPeak = computed(() => Math.max(0, ...(worstAqiStation.value?.forecast || []).map(point => Number(point.aqi) || 0)))
 const airForecastHeadline = computed(() => worstAqiStation.value ? `AQI สูงสุดราว ${airForecastPeak.value || worstAqiStation.value.aqi}` : 'รอข้อมูลคุณภาพอากาศ')
-const airForecastDetail = computed(() => worstAqiStation.value ? `${worstAqiStation.value.name} · แบบจำลอง CAMS 24 ชั่วโมง` : aqiStatus.value === 'error' ? 'เชื่อมต่อ Open-Meteo CAMS ไม่ได้' : 'กำลังเชื่อมต่อแบบจำลองคุณภาพอากาศ')
+const airForecastDetail = computed(() => {
+  if (worstAqiStation.value?.forecast?.length) return `${worstAqiStation.value.name} · แบบจำลอง CAMS 24 ชั่วโมง`
+  if (worstAqiStation.value) return `${worstAqiStation.value.name} · สถานี AQICN พร้อมใช้ แต่ CAMS เชื่อมต่อไม่ได้`
+  return aqiStatus.value === 'error' ? 'เชื่อมต่อสถานี AQICN ไม่ได้' : 'กำลังเชื่อมต่อแบบจำลองคุณภาพอากาศ'
+})
 const rainForecastHeadline = computed(() => topRainForecast.value ? `${topRainForecast.value.rainDirection || 'รอทิศทาง'} · ${topRainForecast.value.rain24h} มม.` : 'รอข้อมูลฝน')
 const rainForecastDetail = computed(() => topRainForecast.value ? `${topRainForecast.value.name} · แนวเคลื่อนตัว 1–6 ชั่วโมงจากข้อมูลลมจริง` : rainStatus.value === 'error' ? 'เชื่อมต่อข้อมูลฝนไม่ได้' : 'กำลังเชื่อมต่อสถานีวัดฝน')
 

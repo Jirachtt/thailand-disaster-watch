@@ -17,7 +17,7 @@ const defaultSourceNames: Record<DataKey, string> = {
     fire: 'NASA FIRMS',
     water: 'ThaiWater',
     rain: 'ThaiWater',
-    air: 'Open-Meteo Air Quality (CAMS)',
+    air: 'AQICN (สถานีตรวจวัด) + Open-Meteo CAMS (พยากรณ์)',
 }
 
 function detectIntent(message: string): ChatIntent {
@@ -84,6 +84,7 @@ function sourceNote(key: DataKey, data: any): string {
 }
 
 function formatNumber(value: unknown, digits = 1): string {
+    if (value === null || value === undefined || value === '') return 'ไม่มีข้อมูล'
     const number = Number(value)
     return Number.isFinite(number) ? number.toFixed(digits) : 'ไม่มีข้อมูล'
 }
@@ -225,13 +226,13 @@ export default defineEventHandler(async (event) => {
         const sortedStations = [...stations].sort((a: any, b: any) => Number(b.aqi) - Number(a.aqi))
         const worstAqi = sortedStations[0]
         const aqiList = sortedStations.slice(0, 8).map((station: any, index: number) =>
-            `${index + 1}. ${station.name} — AQI ${formatNumber(station.aqi, 0)} (${station.label}), PM2.5 ${formatNumber(station.pm25)} µg/m³`
+            `${index + 1}. ${station.name} — AQI ${formatNumber(station.aqi, 0)} (${station.label}), PM2.5 AQI ${formatNumber(station.pm25Aqi, 0)} · สถานี ${station.stationName || 'AQICN'}`
         ).join('\n')
         const qualifier = statusLabel(aqiData)
 
-        let response = `คุณภาพอากาศ (${qualifier})\n\nพื้นที่ในชุดข้อมูล: ${stations.length} แห่ง`
+        let response = `คุณภาพอากาศจากสถานีตรวจวัด AQICN (${qualifier})\n\nพื้นที่ในชุดข้อมูล: ${stations.length} แห่ง`
         if (worstAqi) response += `\nค่าสูงสุด: ${worstAqi.name} — AQI ${formatNumber(worstAqi.aqi, 0)} (${worstAqi.label})`
-        if (aqiList) response += `\n\nข้อมูลรายพื้นที่:\n${aqiList}`
+        if (aqiList) response += `\n\nข้อมูลรายพื้นที่:\n${aqiList}\n\nพยากรณ์ 24 ชั่วโมงใช้แบบจำลอง Open-Meteo CAMS แยกจากค่าตรวจวัดปัจจุบัน`
         response += `\n\n${sourceNote('air', aqiData)}`
         return { response }
     }
