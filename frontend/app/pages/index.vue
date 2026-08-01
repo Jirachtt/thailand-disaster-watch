@@ -268,18 +268,14 @@
 </template>
 
 <script setup>
-// Start the requests after hydration so SSR and the first client render share
-// the same stable empty state. This avoids hydration mismatches while keeping
-// every data source independent and progressively rendered.
-// Upstream calls are capped server-side and return explicit unavailable or
-// stale responses. Keep the browser budget slightly larger than that cap.
-const fetchOptions = { server: false, lazy: true, immediate: false, timeout: 18000 }
-
-const { data: dashboard, pending: pendingDashboard, error: errorDashboard, refresh: refreshDashboard } = useFetch('/api/dashboard/summary', fetchOptions)
-const { data: fireDashboard, pending: pendingFire, error: errorFire, refresh: refreshFire } = useFetch('/api/dashboard/fires', fetchOptions)
-const { data: reportsData, pending: pendingReports, error: errorReports, refresh: refreshReports } = useFetch('/api/reports', { ...fetchOptions, timeout: 6000 })
-const { data: rainData, pending: pendingRain, error: errorRain, refresh: refreshRain } = useFetch('/api/dashboard/rain', fetchOptions)
-const { data: aqiData, pending: pendingAqi, error: errorAqi, refresh: refreshAqi } = useFetch('/api/dashboard/aqi', fetchOptions)
+// Start requests after hydration so SSR and the first client render share the
+// same empty state. Each request is deduplicated, time-bounded, and retried once
+// so a cancelled navigation request cannot leave the dashboard pending forever.
+const { data: dashboard, pending: pendingDashboard, error: errorDashboard, refresh: refreshDashboard } = useResilientFetch('/api/dashboard/summary')
+const { data: fireDashboard, pending: pendingFire, error: errorFire, refresh: refreshFire } = useResilientFetch('/api/dashboard/fires')
+const { data: reportsData, pending: pendingReports, error: errorReports, refresh: refreshReports } = useResilientFetch('/api/reports', { timeout: 6000 })
+const { data: rainData, pending: pendingRain, error: errorRain, refresh: refreshRain } = useResilientFetch('/api/dashboard/rain')
+const { data: aqiData, pending: pendingAqi, error: errorAqi, refresh: refreshAqi } = useResilientFetch('/api/dashboard/aqi')
 
 const selectedStationId = ref('')
 const selectedFireId = ref('')

@@ -1,6 +1,7 @@
 // Real-time data fetching from NASA FIRMS and ThaiWater APIs
 
 import { predictFireSpread, predictRainDirection, degToCompass } from './fireSpreadModel'
+import { isPointInThailand } from './thailandGeofence'
 
 // ============================================
 // OpenWeatherMap — Wind/Weather Data
@@ -121,8 +122,10 @@ async function singleFlight<T>(key: string, task: () => Promise<T>): Promise<T> 
 // NASA FIRMS — Fire Hotspot Data
 // ============================================
 
-// Thailand bounding box (entire country)
-const CM_BBOX = '97.3,5.6,105.7,20.5'
+// NASA FIRMS accepts only a rectangular area. Records returned by this broad
+// request must still pass the local national-boundary geofence below because
+// the rectangle also intersects Myanmar, Laos, Cambodia, Malaysia and Vietnam.
+const THAILAND_REQUEST_BBOX = '97.3,5.6,105.7,20.5'
 
 interface FirmsRecord {
     latitude: number
@@ -313,7 +316,7 @@ async function fetchRealFireDataInternal() {
 
     try {
         // Fetch Thailand fires (primary)
-        const thaiUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/${CM_BBOX}/1`
+        const thaiUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${firmsKey}/VIIRS_SNPP_NRT/${THAILAND_REQUEST_BBOX}/1`
         // Thailand is the only dataset in the critical path. A one-day global
         // VIIRS response can contain 100k+ rows and previously made the O(n²)
         // clustering pass freeze the dashboard.
@@ -328,9 +331,14 @@ async function fetchRealFireDataInternal() {
             throw new Error('NASA FIRMS returned an invalid response')
         }
 
-        const thaiRecords = parseFirmsCsv(thaiResponse)
+        const areaRecords = parseFirmsCsv(thaiResponse)
+        // Filter every observation before clustering/counting. The FIRMS area
+        // endpoint returns the complete rectangle, not the outline of Thailand.
+        const thaiRecords = areaRecords.filter((record) => (
+            isPointInThailand(record.latitude, record.longitude)
+        ))
 
-        console.log(`[FIRMS] Thailand: ${thaiRecords.length} hotspots`)
+        console.log(`[FIRMS] Thailand: ${thaiRecords.length}/${areaRecords.length} hotspots inside national boundary`)
 
         // Process Thailand fires (for alert bar, stats, spread predictions)
         const processRecords = (records: FirmsRecord[]) => {

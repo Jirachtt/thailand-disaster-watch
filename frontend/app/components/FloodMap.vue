@@ -421,11 +421,12 @@
       </ClientOnly>
 
       <!-- Map Controls (top-right) -->
-      <div class="map-controls">
+      <div class="map-controls" role="group" aria-label="เลือกชั้นข้อมูลบนแผนที่">
         <button
           type="button"
           class="map-control-btn report-btn"
           @click="$emit('add-report')"
+          aria-label="แจ้งเหตุภัยพิบัติ"
           title="แจ้งเหตุภัยพิบัติ"
         >
           <span class="material-symbols-rounded">add_alert</span>
@@ -433,109 +434,132 @@
         </button>
         <button
           type="button"
-          class="map-control-btn"
+          class="map-control-btn layer-toggle fire-btn"
           :class="{ active: showFires }"
           :aria-pressed="showFires"
+          :aria-label="`${showFires ? 'ซ่อน' : 'แสดง'}จุดความร้อน ${fires.length} จุด`"
           @click="toggleFires"
           title="แสดงหรือซ่อนจุดความร้อนในประเทศไทย"
         >
           <span class="material-symbols-rounded">local_fire_department</span>
           <span class="control-label">{{ fireButtonLabel }}</span>
+          <span class="layer-state material-symbols-rounded" aria-hidden="true">{{ showFires ? 'check' : 'add' }}</span>
         </button>
         <button
           type="button"
-          class="map-control-btn"
+          class="map-control-btn layer-toggle fire-prediction-btn"
           :class="{ active: showPredictions }"
           :aria-pressed="showPredictions"
-          @click="showPredictions = !showPredictions"
+          :aria-label="`${showPredictions ? 'ซ่อน' : 'แสดง'}ทิศทางลามไฟ`"
+          @click="togglePredictions"
           title="แสดงทิศทางลามไฟ (CA + Wind)"
         >
           <span class="material-symbols-rounded">air</span>
           <span class="control-label">ทิศลามไฟ</span>
+          <span class="layer-state material-symbols-rounded" aria-hidden="true">{{ showPredictions ? 'check' : 'add' }}</span>
         </button>
         <button
           type="button"
-          class="map-control-btn aqi-btn"
+          class="map-control-btn layer-toggle aqi-btn"
           :class="{ active: showAqi }"
           :aria-pressed="showAqi"
+          :aria-label="`${showAqi ? 'ซ่อน' : 'แสดง'}คุณภาพอากาศ ${aqiStations.length} สถานี`"
           @click="showAqi = !showAqi"
           title="แสดง/ซ่อนคุณภาพอากาศ"
         >
           <span class="material-symbols-rounded">masks</span>
           <span class="control-label">AQI {{ aqiStations.length }}</span>
+          <span class="layer-state material-symbols-rounded" aria-hidden="true">{{ showAqi ? 'check' : 'add' }}</span>
         </button>
         <button
           type="button"
-          class="map-control-btn"
+          class="map-control-btn layer-toggle water-btn"
           :class="{ active: showWater }"
           :aria-pressed="showWater"
+          :aria-label="`${showWater ? 'ซ่อน' : 'แสดง'}สถานีน้ำ ${stations.length} สถานี`"
           @click="showWater = !showWater"
           title="แสดง/ซ่อนสถานีน้ำ"
         >
           <span class="material-symbols-rounded">water_drop</span>
           <span class="control-label">น้ำ {{ stations.length }}</span>
+          <span class="layer-state material-symbols-rounded" aria-hidden="true">{{ showWater ? 'check' : 'add' }}</span>
         </button>
         <button
           type="button"
-          class="map-control-btn rain-btn"
+          class="map-control-btn layer-toggle rain-btn"
           :class="{ active: showRain }"
           :aria-pressed="showRain"
-          @click="showRain = !showRain"
+          :aria-label="`${showRain ? 'ซ่อน' : 'แสดง'}พื้นที่ฝน ${rainStations.length} สถานี`"
+          @click="toggleRain"
           title="แสดง/ซ่อนพื้นที่ฝนตก"
         >
           <span class="material-symbols-rounded">rainy</span>
           <span class="control-label">ฝน {{ rainStations.length }}</span>
+          <span class="layer-state material-symbols-rounded" aria-hidden="true">{{ showRain ? 'check' : 'add' }}</span>
         </button>
         <button
           type="button"
-          class="map-control-btn rain-dir-btn"
+          class="map-control-btn layer-toggle rain-dir-btn"
           :class="{ active: showRainDirection }"
           :aria-pressed="showRainDirection"
-          @click="showRainDirection = !showRainDirection"
+          :aria-label="`${showRainDirection ? 'ซ่อน' : 'แสดง'}พยากรณ์ทิศทางฝน`"
+          @click="toggleRainDirection"
           title="พยากรณ์ทิศทางฝน 1-3 ชม."
         >
           <span class="material-symbols-rounded">storm</span>
           <span class="control-label">พยากรณ์ฝน</span>
+          <span class="layer-state material-symbols-rounded" aria-hidden="true">{{ showRainDirection ? 'check' : 'add' }}</span>
         </button>
       </div>
 
       <!-- Map Legend Overlay -->
-      <div class="map-overlay">
-        <div class="map-overlay-title">สัญลักษณ์</div>
-        <div class="legend-item">
-          <div class="legend-dot" style="background: #22c55e"></div>
-          <span>ปกติ (Safe)</span>
+      <div v-if="hasVisibleLegend" class="map-overlay">
+        <div class="map-overlay-title">ชั้นข้อมูลที่แสดง</div>
+        <div v-if="showWater" class="legend-group">
+          <div class="legend-item">
+            <div class="legend-dot" style="background: #22c55e"></div>
+            <span>ระดับน้ำปกติ</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: #f59e0b"></div>
+            <span>ระดับน้ำเฝ้าระวัง</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot" style="background: #ef4444"></div>
+            <span>ระดับน้ำวิกฤต</span>
+          </div>
         </div>
-        <div class="legend-item">
-          <div class="legend-dot" style="background: #f59e0b"></div>
-          <span>เฝ้าระวัง (Warning)</span>
+        <div v-if="showFires" class="legend-group">
+          <div class="legend-item">
+            <span class="material-symbols-rounded legend-symbol fire" aria-hidden="true">local_fire_department</span>
+            <span>จุดความร้อน</span>
+          </div>
+          <div v-if="showPredictions" class="legend-item">
+            <div class="legend-ring"></div>
+            <span>ทิศและรัศมีลามไฟ</span>
+          </div>
         </div>
-        <div class="legend-item">
-          <div class="legend-dot" style="background: #ef4444"></div>
-          <span>วิกฤต (Critical)</span>
+        <div v-if="showAqi" class="legend-group">
+          <div class="legend-item">
+            <span class="material-symbols-rounded legend-symbol aqi" aria-hidden="true">masks</span>
+            <span>คุณภาพอากาศ (AQI)</span>
+          </div>
         </div>
-        <div class="legend-divider"></div>
-        <div class="legend-item">
-          <span class="material-symbols-rounded legend-symbol fire" aria-hidden="true">local_fire_department</span>
-          <span>จุดไฟไหม้</span>
+        <div v-if="showRain" class="legend-group">
+          <div class="legend-item">
+            <span class="material-symbols-rounded legend-symbol rain" aria-hidden="true">rainy</span>
+            <span>ฝนตกปัจจุบัน</span>
+          </div>
+          <div v-if="showRainDirection" class="legend-item">
+            <span style="font-size: 10px; flex-shrink: 0; color: #3b82f6;">➜ ┈</span>
+            <span>พยากรณ์ทิศทางฝน (1-3 ชม.)</span>
+          </div>
         </div>
-        <div class="legend-item">
-          <div class="legend-ring"></div>
-          <span>รัศมีลุกลาม (คาดการณ์)</span>
-        </div>
-        <div class="legend-divider" v-if="reports.length > 0"></div>
-        <div class="legend-item" v-if="reports.length > 0">
-          <span class="material-symbols-rounded legend-symbol" aria-hidden="true">campaign</span>
-          <span>แจ้งเหตุจากชุมชน</span>
-        </div>
-        <div class="legend-divider"></div>
-        <div class="legend-item">
-          <span class="material-symbols-rounded legend-symbol rain" aria-hidden="true">rainy</span>
-          <span>ฝนตก (Real-time)</span>
-        </div>
-        <div class="legend-item" v-if="showRainDirection">
-          <span style="font-size: 10px; flex-shrink: 0; color: #3b82f6;">➜ ┈</span>
-          <span>พยากรณ์ทิศทางฝน (1-3 ชม.)</span>
+        <div v-if="showReports && reports.length > 0" class="legend-group">
+          <div class="legend-item">
+            <span class="material-symbols-rounded legend-symbol" aria-hidden="true">campaign</span>
+            <span>แจ้งเหตุจากชุมชน</span>
+          </div>
         </div>
       </div>
 
@@ -607,8 +631,11 @@ const mapOptions = {
   attributionControl: true,
 }
 
-// Watch for focusFire changes and pan map
+// Watch for focusFire changes, reveal its layer, and pan map
 watch(() => props.focusFire, (newVal) => {
+  if (newVal) {
+    showFires.value = true
+  }
   if (newVal && map.value) {
     const leafletMap = map.value.leafletObject
     if (leafletMap) {
@@ -619,24 +646,25 @@ watch(() => props.focusFire, (newVal) => {
   }
 })
 
-// Watch for focusStation changes and pan map
+// Watch for focusStation changes, reveal its layer, and pan map
 watch(() => props.focusStation, (newVal) => {
+  if (newVal?.layer === 'aqi') showAqi.value = true
+  else if (newVal) showWater.value = true
+
   if (newVal && map.value) {
     const leafletMap = map.value.leafletObject
     if (leafletMap) {
       leafletMap.flyTo([newVal.lat, newVal.lng], 10, {
         duration: 0.8,
       })
-      if (newVal.layer === 'aqi') showAqi.value = true
-      else showWater.value = true
     }
   }
 })
 
 // === Layer toggles ===
-const showFires = ref(true)
+const showFires = ref(false)
 const showPredictions = ref(false)
-const showWater = ref(true)
+const showWater = ref(false)
 const showReports = ref(true)
 const showRain = ref(false)
 const showRainDirection = ref(false)
@@ -647,8 +675,22 @@ function toggleFires() {
   if (!showFires.value) showPredictions.value = false
 }
 
+function togglePredictions() {
+  showPredictions.value = !showPredictions.value
+  if (showPredictions.value) showFires.value = true
+}
+
+function toggleRain() {
+  showRain.value = !showRain.value
+  if (!showRain.value) showRainDirection.value = false
+}
+
+function toggleRainDirection() {
+  showRainDirection.value = !showRainDirection.value
+  if (showRainDirection.value) showRain.value = true
+}
+
 const fireButtonLabel = computed(() => {
-  if (!showFires.value) return 'ไฟ ปิด'
   return `ไฟ ${props.fires.length}`
 })
 
@@ -676,6 +718,14 @@ const hasFloodRisk = computed(() => {
 const warningCount = computed(() => {
   return props.stations.filter((s) => s.riskLevel === 'warning' || s.riskLevel === 'danger').length
 })
+
+const hasVisibleLegend = computed(() => (
+  showWater.value
+  || showFires.value
+  || showAqi.value
+  || showRain.value
+  || (showReports.value && props.reports.length > 0)
+))
 
 function getFireSpreadRings(fireId) {
   const fire = props.fires.find((f) => f.id === fireId) || props.worldFires.find((f) => f.id === fireId)
@@ -1033,14 +1083,14 @@ function getRainIntensityLabel(intensity) {
   z-index: 1000;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 
 .map-control-btn {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 40px;
+  min-height: 44px;
   padding: 7px 11px;
   border: 1px solid rgba(100, 116, 139, 0.3);
   border-radius: 9px;
@@ -1053,6 +1103,7 @@ function getRainIntensityLabel(intensity) {
   transition: color 0.2s, background 0.2s, border-color 0.2s;
   white-space: nowrap;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  touch-action: manipulation;
 }
 
 .map-control-btn .material-symbols-rounded {
@@ -1065,6 +1116,13 @@ function getRainIntensityLabel(intensity) {
   color: #1d4ed8;
 }
 
+.map-control-btn:focus-visible,
+.map-search-clear:focus-visible,
+.map-search-result-item:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.45);
+  outline-offset: 2px;
+}
+
 .map-control-btn.active {
   background: #1d4ed8;
   border-color: #1d4ed8;
@@ -1074,6 +1132,19 @@ function getRainIntensityLabel(intensity) {
 
 .map-control-btn.active .material-symbols-rounded {
   color: #ffffff;
+}
+
+.map-control-btn.fire-btn.active,
+.map-control-btn.fire-prediction-btn.active {
+  background: #c2410c;
+  border-color: #c2410c;
+  box-shadow: 0 2px 8px rgba(194, 65, 12, 0.32);
+}
+
+.map-control-btn.water-btn.active {
+  background: #0369a1;
+  border-color: #0369a1;
+  box-shadow: 0 2px 8px rgba(3, 105, 161, 0.3);
 }
 
 .map-control-btn.active.show-all {
@@ -1102,6 +1173,24 @@ function getRainIntensityLabel(intensity) {
   letter-spacing: 0.02em;
 }
 
+.layer-state {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin-left: 2px;
+  border-radius: 50%;
+  color: #64748b;
+  background: rgba(100, 116, 139, 0.12);
+  font-size: 14px !important;
+}
+
+.map-control-btn.active .layer-state {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.2);
+}
+
 /* Legend additions */
 .map-overlay {
   position: absolute;
@@ -1118,10 +1207,11 @@ function getRainIntensityLabel(intensity) {
   backdrop-filter: blur(8px);
 }
 .map-overlay-title { color: var(--text-primary); font-size: .7rem; font-weight: 800; margin-bottom: .35rem; }
+.legend-group + .legend-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(100, 116, 139, 0.15); }
 .legend-item { display: flex; align-items: center; gap: .45rem; min-height: 24px; font-size: .66rem; }
 .legend-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; }
 .legend-symbol { flex: 0 0 auto; color: var(--accent); font-size: 16px; }
-.legend-symbol.fire { color: #c2410c; }.legend-symbol.rain { color: #2563eb; }
+.legend-symbol.fire { color: #c2410c; }.legend-symbol.rain { color: #2563eb; }.legend-symbol.aqi { color: #7c3aed; }
 .legend-divider {
   height: 1px;
   background: rgba(100, 116, 139, 0.15);
@@ -1217,12 +1307,6 @@ function getRainIntensityLabel(intensity) {
   50% { transform: scale(1.15); opacity: 0.8; }
 }
 
-.rain-btn {
-  background: rgba(59, 130, 246, 0.08);
-  color: #2563eb;
-  border: 1px solid rgba(59, 130, 246, 0.3);
-}
-
 .rain-btn.active {
   background: #2563eb;
   border-color: #2563eb;
@@ -1241,12 +1325,6 @@ function getRainIntensityLabel(intensity) {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
-.aqi-btn {
-  background: rgba(147, 51, 234, 0.08);
-  color: #7c3aed;
-  border: 1px solid rgba(147, 51, 234, 0.3);
-}
-
 .aqi-btn.active {
   background: #7c3aed;
   border-color: #7c3aed;
@@ -1257,7 +1335,7 @@ function getRainIntensityLabel(intensity) {
 .map-search-bar {
   position: absolute;
   top: 12px;
-  left: 12px;
+  left: 64px;
   z-index: 1001;
   display: flex;
   align-items: center;
@@ -1268,7 +1346,8 @@ function getRainIntensityLabel(intensity) {
   padding: 6px 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   max-width: 320px;
-  width: 100%;
+  width: calc(100% - 76px);
+  min-height: 44px;
 }
 
 .map-search-input {
@@ -1284,6 +1363,11 @@ function getRainIntensityLabel(intensity) {
 
 .map-search-input::placeholder {
   color: var(--text-muted);
+}
+
+.map-search-bar:focus-within {
+  border-color: rgba(37, 99, 235, 0.65);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16), 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .map-search-clear {
@@ -1303,15 +1387,15 @@ function getRainIntensityLabel(intensity) {
 
 .map-search-results {
   position: absolute;
-  top: 44px;
-  left: 12px;
+  top: 64px;
+  left: 64px;
   z-index: 1002;
   background: white;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   max-width: 320px;
-  width: 100%;
+  width: calc(100% - 76px);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -1373,14 +1457,54 @@ function getRainIntensityLabel(intensity) {
   border-color: rgba(71, 85, 105, 0.4);
 }
 
+[data-theme="dark"] .map-control-btn.active {
+  color: #ffffff;
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+
+[data-theme="dark"] .map-control-btn.fire-btn.active,
+[data-theme="dark"] .map-control-btn.fire-prediction-btn.active {
+  background: #c2410c;
+  border-color: #c2410c;
+}
+
+[data-theme="dark"] .map-control-btn.water-btn.active {
+  background: #0369a1;
+  border-color: #0369a1;
+}
+
+[data-theme="dark"] .map-control-btn.aqi-btn.active {
+  background: #7c3aed;
+  border-color: #7c3aed;
+}
+
+[data-theme="dark"] .map-control-btn.rain-btn.active {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+[data-theme="dark"] .map-control-btn.rain-dir-btn.active {
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  border-color: #4f46e5;
+}
+
 @media (max-width: 700px) {
   .map-search-bar { left: 8px; right: 8px; top: 8px; max-width: none; width: auto; min-height: 44px; }
-  .map-search-results { left: 8px; right: 8px; top: 54px; max-width: none; width: auto; }
-  .map-controls { top: auto; left: 8px; right: 8px; bottom: 8px; flex-direction: row; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  .map-search-results { left: 8px; right: 8px; top: 60px; max-width: none; width: auto; }
+  .map-controls { top: auto; left: 8px; right: 8px; bottom: 8px; flex-direction: row; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
   .map-controls::-webkit-scrollbar { display: none; }
   .map-control-btn { flex: 0 0 auto; min-height: 44px; background: rgba(255, 255, 255, .97); }
   .map-overlay { display: none; }
   .flow-direction-label, .fire-alert-label { display: none; }
+  :deep(.leaflet-top.leaflet-left) { top: 56px; right: 8px; left: auto; }
+  :deep(.leaflet-left .leaflet-control) { margin-left: 0; }
+}
+
+:deep(.leaflet-control-zoom a) {
+  width: 40px;
+  height: 40px;
+  line-height: 40px;
 }
 
 [data-theme="dark"] .station-pin {
