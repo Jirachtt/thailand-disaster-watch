@@ -34,6 +34,7 @@
       :fires="firesList"
       :water-status="waterStatus"
       :fire-status="fireStatus"
+      :rain-status="rainStatus"
       :aqi-status="aqiStatus"
       @view-map="handleViewMap"
     />
@@ -55,7 +56,7 @@
         <span class="overview-icon"><span class="material-symbols-rounded" aria-hidden="true">local_fire_department</span></span>
         <span class="overview-body">
           <span class="overview-label">จุดความร้อน</span>
-          <strong v-if="fireDashboard">{{ activeFireCount }} <small>กลุ่มในไทย</small></strong>
+          <strong v-if="fireDashboard && isUsableStatus(fireStatus)">{{ activeFireCount }} <small>กลุ่มในไทย</small></strong>
           <span v-else-if="pendingFire" class="skeleton-line short"></span>
           <strong v-else>— <small>ยังไม่มีข้อมูล</small></strong>
           <span class="overview-meta">ย้อนหลัง 24 ชม. · {{ statusShortLabel(fireStatus) }}</span>
@@ -133,7 +134,7 @@
           </ul>
           <div class="source-note">
             <span class="material-symbols-rounded" aria-hidden="true">info</span>
-            <p>ข้อมูลสำรองใช้เพื่อให้ฟังก์ชันสาธิตทำงานเท่านั้น และจะไม่สร้างคำเตือนภัยจริง</p>
+            <p>ระบบแสดงเฉพาะข้อมูลจาก API จริง หากเชื่อมต่อไม่ได้จะแสดงสถานะขัดข้องโดยไม่สร้างข้อมูลเหตุการณ์ทดแทน</p>
           </div>
         </aside>
       </div>
@@ -147,10 +148,6 @@
           <p>รหัสสถานการณ์มาจาก ThaiWater โดยแยก “น้ำน้อย” และ “น้ำมาก” ไม่ใช้ตัวเลขเป็นลำดับความรุนแรง</p>
         </div>
         <span class="module-status" :class="waterStatus"><span class="status-dot" aria-hidden="true"></span>{{ statusLongLabel(waterStatus) }}</span>
-      </div>
-      <div v-if="dashboard?.isFallback" class="data-notice fallback">
-        <span class="material-symbols-rounded" aria-hidden="true">database</span>
-        <div><strong>กำลังแสดงข้อมูลตัวอย่าง</strong><p>{{ dashboard.dataDelay }}</p></div>
       </div>
       <div class="water-layout">
         <div class="glass-card station-panel">
@@ -209,12 +206,8 @@
         </div>
         <span class="module-status" :class="fireStatus"><span class="status-dot" aria-hidden="true"></span>{{ statusLongLabel(fireStatus) }}</span>
       </div>
-      <div v-if="fireDashboard?.isFallback" class="data-notice fallback">
-        <span class="material-symbols-rounded" aria-hidden="true">science</span>
-        <div><strong>เหตุการณ์ด้านล่างเป็นข้อมูลสาธิต</strong><p>{{ fireDashboard.dataDelay }}</p></div>
-      </div>
       <div v-if="pendingFire && !fireDashboard" class="glass-card module-skeleton"><div class="skeleton-line wide"></div><div class="skeleton-cards"><div v-for="index in 3" :key="index" class="skeleton-card"></div></div></div>
-      <FireSpreadPanel v-else :fires="firesList" :selected-fire-id="selectedFireId" @select-fire="handleFireSelect" />
+      <FireSpreadPanel v-else :fires="firesList" :status="fireStatus" :selected-fire-id="selectedFireId" @select-fire="handleFireSelect" />
     </section>
 
     <section id="air-section" class="dashboard-section" aria-labelledby="air-section-title">
@@ -277,9 +270,8 @@
 // Start the requests after hydration so SSR and the first client render share
 // the same stable empty state. This avoids hydration mismatches while keeping
 // every data source independent and progressively rendered.
-// Upstream calls are capped server-side and return a labelled fallback. Keep
-// the browser budget slightly larger so it can receive that fallback instead
-// of aborting first on a slow connection.
+// Upstream calls are capped server-side and return explicit unavailable or
+// stale responses. Keep the browser budget slightly larger than that cap.
 const fetchOptions = { server: false, lazy: true, immediate: false, timeout: 18000 }
 
 const { data: dashboard, pending: pendingDashboard, error: errorDashboard, refresh: refreshDashboard } = useFetch('/api/dashboard/summary', fetchOptions)
@@ -330,6 +322,7 @@ const worstAqi = computed(() => worstAqiStation.value?.aqi ?? '—')
 const worstAqiCity = computed(() => worstAqiStation.value?.name || 'รอข้อมูล')
 
 function resolveStatus(data, pending, error) {
+  if (data?.status === 'fallback' || data?.isFallback) return 'error'
   if (data?.status) return data.status
   if (data) return 'live'
   if (pending) return 'loading'
@@ -345,8 +338,8 @@ const aqiStatus = computed(() => resolveStatus(aqiData.value, pendingAqi.value, 
 const allStatuses = computed(() => [waterStatus.value, fireStatus.value, rainStatus.value, aqiStatus.value])
 const overallSyncStatus = computed(() => {
   if (allStatuses.value.every(status => status === 'loading')) return 'loading'
-  if (allStatuses.value.some(status => status === 'error')) return 'error'
-  if (allStatuses.value.some(status => ['fallback', 'stale'].includes(status))) return 'degraded'
+  if (allStatuses.value.some(status => ['error', 'fallback'].includes(status))) return 'error'
+  if (allStatuses.value.some(status => status === 'stale')) return 'degraded'
   return 'live'
 })
 const overallSyncLabel = computed(() => ({
@@ -365,7 +358,12 @@ const latestTimestamp = computed(() => {
 const lastUpdateLabel = computed(() => latestTimestamp.value ? `อัปเดตล่าสุด ${formatRelativeTime(latestTimestamp.value)}` : 'กำลังรอข้อมูลชุดแรก')
 
 const visibleStations = computed(() => showAllStations.value ? dashboardStations.value : dashboardStations.value.slice(0, defaultStationLimit))
-const availableForecasts = computed(() => [selectedStation.value, firesList.value.length, aqiStationsList.value.length, rainStationsList.value.length].filter(Boolean).length)
+const availableForecasts = computed(() => [
+  isUsableStatus(waterStatus.value) && selectedStation.value,
+  isUsableStatus(fireStatus.value) && fireSpreadPredictions.value.length,
+  isUsableStatus(aqiStatus.value) && aqiStationsList.value.some(station => station.forecast?.length),
+  isUsableStatus(rainStatus.value) && rainStationsList.value.some(station => station.predictedPath?.length),
+].filter(Boolean).length)
 
 const sourceRows = computed(() => [
   { key: 'water', label: 'ระดับน้ำ', icon: 'water_drop', status: waterStatus.value, source: dashboard.value?.source || 'ThaiWater', timestamp: dashboard.value?.timestamp },
@@ -377,15 +375,20 @@ const sourceRows = computed(() => [
 const topFireForecast = computed(() => firesList.value.find(fire => fire.status === 'active') || firesList.value[0] || null)
 const topRainForecast = computed(() => rainStationsList.value[0] || null)
 
-const waterForecastHeadline = computed(() => selectedStation.value ? `${Number(selectedStation.value.peakPredicted || selectedStation.value.currentLevel).toFixed(2)} ม.` : 'รอข้อมูลสถานี')
-const waterForecastDetail = computed(() => selectedStation.value ? `${dashboard.value?.isFallback ? 'ข้อมูลสาธิต · ' : ''}${selectedStation.value.name} · ${selectedStation.value.situationLabel || 'รอตรวจสอบ'} · ความเชื่อมั่น ${Math.round(selectedStation.value.forecastConfidence || 75)}%` : 'เลือกสถานีเพื่อดูแนวโน้ม 12 ชั่วโมง')
+const waterForecastHeadline = computed(() => selectedStation.value?.peakPredicted != null && Number.isFinite(Number(selectedStation.value.peakPredicted)) ? `${Number(selectedStation.value.peakPredicted).toFixed(2)} ม.` : selectedStation.value ? 'ยังคำนวณไม่ได้' : 'รอข้อมูลสถานี')
+const waterForecastDetail = computed(() => {
+  if (!selectedStation.value) return waterStatus.value === 'error' ? 'เชื่อมต่อ ThaiWater ไม่ได้' : 'เลือกสถานีเพื่อดูแนวโน้ม 12 ชั่วโมง'
+  const score = selectedStation.value.forecastConfidence == null ? null : Number(selectedStation.value.forecastConfidence)
+  const scoreLabel = Number.isFinite(score) ? ` · คะแนนแบบจำลอง ${Math.round(score)}%` : ' · ยังไม่มีแนวโน้มก่อนหน้าเพียงพอ'
+  return `${selectedStation.value.name} · ${selectedStation.value.situationLabel || 'รอตรวจสอบ'}${scoreLabel}`
+})
 const fireForecastHeadline = computed(() => topFireForecast.value?.peakEstimate ? `${topFireForecast.value.peakEstimate.areaSqKm} ตร.กม.` : 'ไม่พบจุดที่คำนวณได้')
-const fireForecastDetail = computed(() => topFireForecast.value?.peakEstimate ? `${fireDashboard.value?.isFallback ? 'ข้อมูลสาธิต · ' : ''}${topFireForecast.value.name} · ประมาณการใน ${topFireForecast.value.peakEstimate.timeHours} ชม.` : 'แบบจำลองจะเริ่มเมื่อมีจุดความร้อน')
+const fireForecastDetail = computed(() => topFireForecast.value?.peakEstimate ? `${topFireForecast.value.name} · ประมาณการใน ${topFireForecast.value.peakEstimate.timeHours} ชม. จากข้อมูล FIRMS และสภาพอากาศจริง` : fireStatus.value === 'error' ? 'เชื่อมต่อ NASA FIRMS ไม่ได้' : 'แบบจำลองจะเริ่มเมื่อมีจุดความร้อนและข้อมูลสภาพอากาศจริง')
 const airForecastPeak = computed(() => Math.max(0, ...(worstAqiStation.value?.forecast || []).map(point => Number(point.aqi) || 0)))
 const airForecastHeadline = computed(() => worstAqiStation.value ? `AQI สูงสุดราว ${airForecastPeak.value || worstAqiStation.value.aqi}` : 'รอข้อมูลคุณภาพอากาศ')
-const airForecastDetail = computed(() => worstAqiStation.value ? `${aqiData.value?.isFallback ? 'ข้อมูลสาธิต · ' : ''}${worstAqiStation.value.name} · แบบจำลอง CAMS 24 ชั่วโมง` : 'กำลังเชื่อมต่อแบบจำลองคุณภาพอากาศ')
+const airForecastDetail = computed(() => worstAqiStation.value ? `${worstAqiStation.value.name} · แบบจำลอง CAMS 24 ชั่วโมง` : aqiStatus.value === 'error' ? 'เชื่อมต่อ Open-Meteo CAMS ไม่ได้' : 'กำลังเชื่อมต่อแบบจำลองคุณภาพอากาศ')
 const rainForecastHeadline = computed(() => topRainForecast.value ? `${topRainForecast.value.rainDirection || 'รอทิศทาง'} · ${topRainForecast.value.rain24h} มม.` : 'รอข้อมูลฝน')
-const rainForecastDetail = computed(() => topRainForecast.value ? `${rainData.value?.isFallback ? 'ข้อมูลสาธิต · ' : ''}${topRainForecast.value.name} · แนวเคลื่อนตัว 1–6 ชั่วโมง` : 'กำลังเชื่อมต่อสถานีวัดฝน')
+const rainForecastDetail = computed(() => topRainForecast.value ? `${topRainForecast.value.name} · แนวเคลื่อนตัว 1–6 ชั่วโมงจากข้อมูลลมจริง` : rainStatus.value === 'error' ? 'เชื่อมต่อข้อมูลฝนไม่ได้' : 'กำลังเชื่อมต่อสถานีวัดฝน')
 
 watch(dashboardStations, (stations) => {
   if (stations.length && !stations.some(station => station.id === selectedStationId.value)) selectedStationId.value = stations[0].id
@@ -396,11 +399,15 @@ watch(firesList, (fires) => {
 }, { immediate: true })
 
 function statusShortLabel(status) {
-  return { live: 'ล่าสุด', stale: 'ข้อมูลเดิม', fallback: 'ข้อมูลสาธิต', error: 'ขัดข้อง', loading: 'กำลังโหลด' }[status] || 'รอตรวจสอบ'
+  return { live: 'ล่าสุด', stale: 'ข้อมูล API เดิม', fallback: 'ขัดข้อง', error: 'ขัดข้อง', loading: 'กำลังโหลด' }[status] || 'รอตรวจสอบ'
 }
 
 function statusLongLabel(status) {
-  return { live: 'เชื่อมต่อข้อมูลแล้ว', stale: 'ใช้ข้อมูลล่าสุดที่บันทึกไว้', fallback: 'ข้อมูลสาธิต', error: 'เชื่อมต่อไม่ได้', loading: 'กำลังโหลด' }[status] || 'รอตรวจสอบ'
+  return { live: 'เชื่อมต่อข้อมูลแล้ว', stale: 'ใช้ข้อมูล API ล่าสุดที่บันทึกไว้', fallback: 'เชื่อมต่อไม่ได้', error: 'เชื่อมต่อไม่ได้', loading: 'กำลังโหลด' }[status] || 'รอตรวจสอบ'
+}
+
+function isUsableStatus(status) {
+  return status === 'live' || status === 'stale'
 }
 
 function formatRelativeTime(timestamp) {
@@ -533,7 +540,6 @@ onUnmounted(() => {
 .water-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(290px, .75fr); gap: 1rem; align-items: start; }
 .station-panel { min-width: 0; }.compact-header { margin-bottom: 1rem; }.stations-list { max-height: 568px; overflow: hidden; display: grid; gap: .65rem; }.stations-list.expanded { max-height: none; }.station-skeletons { display: grid; gap: .65rem; }.station-skeletons .skeleton-card { min-height: 86px; }
 .show-more-btn { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: .4rem; margin-top: .75rem; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--bg-primary); color: var(--accent); font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer; }
-.data-notice { display: flex; align-items: flex-start; gap: .7rem; border-radius: 12px; padding: .85rem 1rem; }.data-notice.fallback { background: var(--color-warning-bg); border: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent); color: var(--text-secondary); }.data-notice .material-symbols-rounded { color: var(--color-warning); }.data-notice strong { color: var(--text-primary); font-size: .84rem; }.data-notice p { font-size: .76rem; }
 .chart-placeholder { min-height: 360px; }.skeleton-chart-block { min-height: 280px; border-radius: 12px; background: var(--bg-primary); }
 .visually-merged-heading { margin-bottom: -.35rem; }
 .forecast-hub-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1rem; }
@@ -542,6 +548,6 @@ onUnmounted(() => {
 .forecast-disclaimer { display: flex; align-items: flex-start; gap: .6rem; color: var(--text-secondary); font-size: .78rem; padding: 1rem; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--bg-primary); }.forecast-disclaimer .material-symbols-rounded { color: var(--color-safe); font-size: 20px; }
 @media (max-width: 1180px) { .overview-grid { grid-template-columns: repeat(2, 1fr); }.map-layout { grid-template-columns: 1fr; }.source-list { grid-template-columns: repeat(2, 1fr); gap: 0 1rem; }.forecast-hub-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 860px) { .dashboard-intro { align-items: flex-start; flex-direction: column; }.intro-actions { width: 100%; justify-content: space-between; }.water-layout { grid-template-columns: 1fr; }.hazard-nav { top: 66px; }.section-heading { align-items: flex-start; flex-direction: column; } }
-@media (max-width: 620px) { .dashboard-page { gap: 1rem; }.overview-grid { grid-template-columns: 1fr; }.overview-card { min-height: 112px; }.intro-actions { align-items: stretch; flex-direction: column; }.primary-btn { width: 100%; }.source-list { grid-template-columns: 1fr; }.forecast-hub-grid { grid-template-columns: 1fr; }.hazard-nav { width: 100%; justify-content: flex-start; }.map-layout { margin-inline: -.25rem; } }
+@media (max-width: 620px) { .dashboard-page { gap: 1rem; }.overview-grid { grid-template-columns: 1fr; }.overview-card { min-height: 112px; }.intro-actions { align-items: stretch; flex-direction: column; }.primary-btn { width: 100%; }.source-list { grid-template-columns: 1fr; }.forecast-hub-grid { grid-template-columns: 1fr; }.hazard-nav { width: 100%; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .15rem; overflow: visible; }.hazard-nav button { min-width: 0; flex-direction: column; justify-content: center; gap: .05rem; padding: .35rem .1rem; font-size: .66rem; line-height: 1.2; white-space: normal; }.map-layout { margin-inline: -.25rem; } }
 @media (prefers-reduced-motion: reduce) { .sync-indicator.loading { animation: none; } }
 </style>

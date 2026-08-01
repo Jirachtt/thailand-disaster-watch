@@ -7,7 +7,7 @@
           ระดับน้ำและแนวโน้ม — {{ activeStationName }}
         </h3>
         <p class="card-subtitle">{{ historySubtitle }}</p>
-        <div v-if="tsData" class="history-provenance" role="status">
+        <div v-if="tsData && !isUnavailable" class="history-provenance" role="status">
           <span class="history-badge" :class="historyBadge.className">{{ historyBadge.label }}</span>
           <span class="history-source">{{ tsData.source }}</span>
         </div>
@@ -34,9 +34,9 @@
       <div class="skeleton-line wide"></div>
       <div class="skeleton-chart"></div>
     </div>
-    <div v-else-if="error && !tsData" class="module-empty compact">
+    <div v-else-if="isUnavailable" class="module-empty compact">
       <span class="material-symbols-rounded" aria-hidden="true">sync_problem</span>
-      <p>โหลดข้อมูลย้อนหลังไม่สำเร็จ</p>
+      <p>เชื่อมต่อข้อมูลย้อนหลังของสถานีนี้ไม่ได้</p>
       <button type="button" class="secondary-btn" @click="refresh">ลองอีกครั้ง</button>
     </div>
     <div v-else-if="!hasChartData" class="module-empty compact">
@@ -108,12 +108,16 @@ const { data: tsData, pending, error, refresh } = useFetch(
   },
 )
 
-const hasChartData = computed(() => Boolean(tsData.value?.waterLevel?.length))
-const isEstimatedHistory = computed(() => Boolean(tsData.value?.estimatedHistory))
+const isUnavailable = computed(() => Boolean(error.value)
+  || ['error', 'fallback'].includes(tsData.value?.status)
+  || Boolean(tsData.value?.isFallback)
+  || tsData.value?.rainfallSourceStatus === 'fallback')
+const hasChartData = computed(() => !isUnavailable.value && Boolean(tsData.value?.waterLevel?.length))
+const isEstimatedHistory = computed(() => !isUnavailable.value && Boolean(tsData.value?.estimatedHistory))
 
 const historyBadge = computed(() => {
-  if (tsData.value?.isFallback) {
-    return { label: 'ข้อมูลสาธิต — ประเมินย้อนหลัง', className: 'demo' }
+  if (isUnavailable.value) {
+    return { label: 'เชื่อมต่อไม่ได้', className: 'error' }
   }
   if (isEstimatedHistory.value) {
     return { label: 'ค่าประเมินย้อนหลัง', className: 'estimated' }
@@ -121,24 +125,29 @@ const historyBadge = computed(() => {
   if (tsData.value?.status === 'live') {
     return { label: 'ข้อมูลตรวจวัดย้อนหลัง', className: 'live' }
   }
+  if (tsData.value?.status === 'stale') {
+    return { label: 'ข้อมูลจริงล่าสุดที่บันทึกไว้', className: 'stale' }
+  }
   return { label: 'ไม่พบแหล่งข้อมูล', className: 'error' }
 })
 
 const historySubtitle = computed(() => {
   if (!tsData.value) return 'กำลังตรวจสอบแหล่งข้อมูลย้อนหลังและแบบจำลองล่วงหน้า 12 ชั่วโมง'
-  if (tsData.value.status === 'error') return 'ยังไม่พบข้อมูลย้อนหลังของสถานีนี้'
+  if (isUnavailable.value) return 'เชื่อมต่อแหล่งข้อมูลย้อนหลังของสถานีนี้ไม่ได้'
   return isEstimatedHistory.value
     ? 'แนวโน้มย้อนหลังจากค่าล่าสุด และแบบจำลองล่วงหน้า 12 ชั่วโมง'
     : 'ข้อมูลตรวจวัดย้อนหลัง และแบบจำลองล่วงหน้า 12 ชั่วโมง'
 })
 
 const historyLegendLabel = computed(() => isEstimatedHistory.value ? 'ค่าประเมินย้อนหลัง' : 'ค่าตรวจวัดย้อนหลัง')
-const rainfallLegendLabel = computed(() => tsData.value?.rainfallSourceStatus === 'fallback'
-  ? 'ฝนสาธิต — เฉลี่ยจากยอดสะสม 24 ชม.'
-  : 'ฝนเฉลี่ยจากยอดสะสม 24 ชม.')
+const rainfallLegendLabel = computed(() => {
+  if (['error', 'fallback'].includes(tsData.value?.rainfallSourceStatus)) return 'ไม่มีข้อมูลฝนจาก API'
+  if (tsData.value?.rainfallSourceStatus === 'stale') return 'ฝนจากข้อมูล API ล่าสุดที่บันทึกไว้'
+  return 'ฝนเฉลี่ยจากยอดสะสม 24 ชม.'
+})
 
 const historyFootnote = computed(() => {
-  if (tsData.value?.isFallback) return 'ข้อมูลสาธิตออฟไลน์ ไม่ใช่ค่าตรวจวัดปัจจุบัน'
+  if (isUnavailable.value) return 'ไม่แสดงข้อมูล เนื่องจากเชื่อมต่อแหล่งข้อมูลไม่ได้'
   if (isEstimatedHistory.value) return 'เส้นย้อนหลังคำนวณจากค่าล่าสุดและแนวโน้ม ไม่ใช่ค่าตรวจวัดรายชั่วโมง'
   return 'ความเชื่อมั่นของค่าคาดการณ์ลดลงตามระยะเวลา'
 })
@@ -268,7 +277,7 @@ onUnmounted(() => chartInstance?.destroy())
 .history-provenance { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .65rem; margin-top: .5rem; }
 .history-badge { min-height: 24px; display: inline-flex; align-items: center; border: 1px solid var(--border-subtle); border-radius: 999px; padding: .15rem .55rem; color: var(--text-secondary); background: var(--bg-primary); font-size: .68rem; font-weight: 800; }
 .history-badge.live { color: var(--color-safe); background: var(--color-safe-bg); border-color: color-mix(in srgb, var(--color-safe) 25%, transparent); }
-.history-badge.estimated, .history-badge.demo { color: var(--color-warning); background: var(--color-warning-bg); border-color: color-mix(in srgb, var(--color-warning) 28%, transparent); }
+.history-badge.estimated, .history-badge.stale { color: var(--color-warning); background: var(--color-warning-bg); border-color: color-mix(in srgb, var(--color-warning) 28%, transparent); }
 .history-badge.error { color: var(--color-danger); background: var(--color-danger-bg); }
 .history-source { color: var(--text-muted); font-size: .68rem; }
 .icon-action { width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--border-subtle); background: var(--bg-secondary); color: var(--text-secondary); display: grid; place-items: center; cursor: pointer; }

@@ -3,12 +3,13 @@
  *
  * Open-Meteo's Air Quality API is used as the primary source because it does
  * not require a browser-side API key and returns current PM2.5/PM10 together
- * with a CAMS forecast. A clearly-labelled offline sample is returned only
- * when the upstream service is unavailable and no stale response exists.
+ * with a CAMS forecast. Only upstream observations (or a stale response that
+ * was previously obtained from upstream) are ever returned.
  */
 
 const AQI_CACHE: Record<string, { data: any, ts: number }> = {}
 const AQI_CACHE_TTL = 10 * 60 * 1000
+const AQI_STALE_CACHE_TTL = 6 * 60 * 60 * 1000
 
 const THAI_AQI_CITIES = [
     { id: 'aqi-chiang-mai', name: 'เชียงใหม่', nameEn: 'Chiang Mai', lat: 18.7883, lng: 98.9853 },
@@ -21,11 +22,15 @@ const THAI_AQI_CITIES = [
     { id: 'aqi-phuket', name: 'ภูเก็ต', nameEn: 'Phuket', lat: 7.8804, lng: 98.3923 },
 ]
 
-function round(value: unknown, digits = 1): number {
-    const parsed = Number(value)
-    if (!Number.isFinite(parsed)) return 0
+function round(value: number, digits = 1): number {
     const multiplier = 10 ** digits
-    return Math.round(parsed * multiplier) / multiplier
+    return Math.round(value * multiplier) / multiplier
+}
+
+function toFiniteNumber(value: unknown): number | null {
+    if (value === null || value === undefined || value === '') return null
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
 }
 
 function getAqiLevel(aqi: number) {
@@ -35,36 +40,6 @@ function getAqiLevel(aqi: number) {
     if (aqi <= 200) return { level: 'unhealthy', label: 'กระทบสุขภาพ', labelEn: 'Unhealthy', color: '#dc2626' }
     if (aqi <= 300) return { level: 'very-unhealthy', label: 'อันตราย', labelEn: 'Very unhealthy', color: '#9333ea' }
     return { level: 'hazardous', label: 'อันตรายมาก', labelEn: 'Hazardous', color: '#7f1d1d' }
-}
-
-function createOfflineStations() {
-    const baseline = [42, 48, 45, 39, 57, 52, 50, 34]
-    const now = Date.now()
-
-    return THAI_AQI_CITIES.map((city, cityIndex) => {
-        const aqi = baseline[cityIndex] || 40
-        const forecast = Array.from({ length: 9 }, (_, index) => {
-            const forecastAqi = Math.max(10, Math.round(aqi + Math.sin((index + cityIndex) / 2) * 8))
-            return {
-                time: new Date(now + index * 3 * 3600000).toISOString(),
-                aqi: forecastAqi,
-                pm25: round(forecastAqi * 0.34),
-                pm10: round(forecastAqi * 0.52),
-                ...getAqiLevel(forecastAqi),
-            }
-        })
-
-        return {
-            ...city,
-            aqi,
-            pm25: round(aqi * 0.34),
-            pm10: round(aqi * 0.52),
-            dominantPol: 'pm2_5',
-            time: new Date(now).toISOString(),
-            forecast,
-            ...getAqiLevel(aqi),
-        }
-    })
 }
 
 export async function fetchAirQualityData() {
@@ -89,27 +64,37 @@ export async function fetchAirQualityData() {
             if (!location?.current) return null
 
             const times: string[] = location.hourly?.time || []
-            const forecast = times
-                .map((time, forecastIndex) => {
-                    const aqi = round(location.hourly?.us_aqi?.[forecastIndex], 0)
-                    return {
+            const forecast = times.flatMap((time, forecastIndex) => {
+                    if (forecastIndex % 3 !== 0) return []
+                    const rawAqi = toFiniteNumber(location.hourly?.us_aqi?.[forecastIndex])
+                    const rawPm25 = toFiniteNumber(location.hourly?.pm2_5?.[forecastIndex])
+                    const rawPm10 = toFiniteNumber(location.hourly?.pm10?.[forecastIndex])
+                    if (rawAqi === null || rawPm25 === null || rawPm10 === null) return []
+                    const aqi = round(rawAqi, 0)
+                    return [{
                         time,
                         aqi,
-                        pm25: round(location.hourly?.pm2_5?.[forecastIndex]),
-                        pm10: round(location.hourly?.pm10?.[forecastIndex]),
+                        pm25: round(rawPm25),
+                        pm10: round(rawPm10),
                         ...getAqiLevel(aqi),
-                    }
+                    }]
                 })
-                .filter((_: any, forecastIndex: number) => forecastIndex % 3 === 0)
 
-            const aqi = round(location.current.us_aqi, 0)
+            const rawAqi = toFiniteNumber(location.current.us_aqi)
+            const rawPm25 = toFiniteNumber(location.current.pm2_5)
+            const rawPm10 = toFiniteNumber(location.current.pm10)
+            if (rawAqi === null || rawPm25 === null || rawPm10 === null) return null
+
+            const responseLat = toFiniteNumber(location.latitude)
+            const responseLng = toFiniteNumber(location.longitude)
+            const aqi = round(rawAqi, 0)
             return {
                 ...city,
-                lat: round(location.latitude, 4) || city.lat,
-                lng: round(location.longitude, 4) || city.lng,
+                lat: responseLat === null ? city.lat : round(responseLat, 4),
+                lng: responseLng === null ? city.lng : round(responseLng, 4),
                 aqi,
-                pm25: round(location.current.pm2_5),
-                pm10: round(location.current.pm10),
+                pm25: round(rawPm25),
+                pm10: round(rawPm10),
                 dominantPol: 'pm2_5',
                 time: location.current.time,
                 forecast,
@@ -135,23 +120,24 @@ export async function fetchAirQualityData() {
     } catch (error: any) {
         console.error('[Air quality] API error:', error?.message || error)
 
-        if (cached?.data) {
+        if (cached?.data && Date.now() - cached.ts < AQI_STALE_CACHE_TTL) {
             return {
                 ...cached.data,
                 status: 'stale',
+                isFallback: false,
                 dataDelay: 'ใช้ข้อมูลล่าสุดที่บันทึกไว้ เนื่องจากแหล่งข้อมูลตอบสนองช้า',
             }
         }
 
-        const stations = createOfflineStations()
         return {
             timestamp: new Date().toISOString(),
-            source: 'ข้อมูลตัวอย่างออฟไลน์',
-            dataDelay: 'ใช้เพื่อให้ระบบสาธิตทำงานเมื่อเครือข่ายขัดข้อง ไม่ใช่ข้อมูลตรวจวัดปัจจุบัน',
-            status: 'fallback',
-            isFallback: true,
-            totalStations: stations.length,
-            stations,
+            source: 'Open-Meteo Air Quality (CAMS)',
+            sourceUrl: 'https://open-meteo.com/en/docs/air-quality-api',
+            dataDelay: 'เชื่อมต่อ Open-Meteo Air Quality ไม่สำเร็จ',
+            status: 'error',
+            isFallback: false,
+            totalStations: 0,
+            stations: [],
         }
     }
 }

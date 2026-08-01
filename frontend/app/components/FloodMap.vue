@@ -218,7 +218,7 @@
                     </span>
                   </div>
                   <div class="popup-stat">
-                    <span class="popup-stat-label">พื้นที่ไหม้</span>
+                    <span class="popup-stat-label">พื้นที่ตรวจจับโดยประมาณ</span>
                     <span class="popup-stat-value" style="color: #f97316">{{ fire.areaSqKm }} ตร.กม.</span>
                   </div>
                   <div class="popup-stat">

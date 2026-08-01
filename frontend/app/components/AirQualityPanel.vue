@@ -7,26 +7,26 @@
         </span>
         <div>
           <h2 id="air-panel-title">ฝุ่น PM2.5 และคุณภาพอากาศ</h2>
-          <p>{{ source || 'กำลังเชื่อมต่อแหล่งข้อมูล' }}</p>
+          <p>{{ sourceText }}</p>
         </div>
       </div>
-      <span class="module-status" :class="status">
+      <span class="module-status" :class="normalizedStatus">
         <span class="status-dot" aria-hidden="true"></span>
         {{ statusText }}
       </span>
     </div>
 
-    <div v-if="pending && !stations.length" class="module-skeleton" aria-label="กำลังโหลดข้อมูลคุณภาพอากาศ">
+    <div v-if="pending && !displayStations.length" class="module-skeleton" aria-label="กำลังโหลดข้อมูลคุณภาพอากาศ">
       <div class="skeleton-line wide"></div>
       <div class="skeleton-cards">
         <div v-for="index in 4" :key="index" class="skeleton-card"></div>
       </div>
     </div>
 
-    <div v-else-if="!stations.length" class="module-empty">
+    <div v-else-if="!displayStations.length" class="module-empty">
       <span class="material-symbols-rounded" aria-hidden="true">cloud_off</span>
-      <h3>ยังไม่มีข้อมูลคุณภาพอากาศ</h3>
-      <p>{{ error ? 'แหล่งข้อมูลตอบสนองช้าหรือเชื่อมต่อไม่ได้' : 'กำลังรอข้อมูลสถานี' }}</p>
+      <h3>{{ isUnavailable ? 'เชื่อมต่อข้อมูลคุณภาพอากาศไม่ได้' : 'ยังไม่มีข้อมูลคุณภาพอากาศ' }}</h3>
+      <p>{{ isUnavailable ? 'ระบบจะไม่สร้างค่าทดแทน กรุณาลองเชื่อมต่อแหล่งข้อมูลอีกครั้ง' : 'กำลังรอข้อมูลสถานี' }}</p>
       <button type="button" class="secondary-btn" @click="$emit('retry')">
         <span class="material-symbols-rounded" aria-hidden="true">refresh</span>
         ลองเชื่อมต่ออีกครั้ง
@@ -36,7 +36,7 @@
     <template v-else>
       <div class="air-station-tabs" role="list" aria-label="เลือกพื้นที่คุณภาพอากาศ">
         <button
-          v-for="station in stations"
+          v-for="station in displayStations"
           :key="station.id"
           type="button"
           class="air-station-tab"
@@ -139,25 +139,31 @@ const props = defineProps({
 defineEmits(['focus', 'retry'])
 
 const selectedId = ref('')
+const normalizedStatus = computed(() => props.status === 'fallback' ? 'error' : props.status)
+const isUsable = computed(() => ['live', 'stale'].includes(normalizedStatus.value))
+const isUnavailable = computed(() => Boolean(props.error) || normalizedStatus.value === 'error')
+const displayStations = computed(() => isUsable.value && !props.error ? props.stations : [])
+const sourceText = computed(() => isUnavailable.value
+  ? 'แหล่งข้อมูลคุณภาพอากาศเชื่อมต่อไม่ได้'
+  : props.source || 'กำลังเชื่อมต่อแหล่งข้อมูล')
 
-watch(() => props.stations, (stations) => {
+watch(displayStations, (stations) => {
   if (!stations.length) return
   if (!stations.some(station => station.id === selectedId.value)) {
     selectedId.value = [...stations].sort((a, b) => Number(b.aqi) - Number(a.aqi))[0]?.id || stations[0].id
   }
 }, { immediate: true, deep: true })
 
-const selectedStation = computed(() => props.stations.find(station => station.id === selectedId.value) || props.stations[0])
+const selectedStation = computed(() => displayStations.value.find(station => station.id === selectedId.value) || displayStations.value[0])
 const selectedForecast = computed(() => selectedStation.value?.forecast || [])
 const maxForecastAqi = computed(() => Math.max(100, ...selectedForecast.value.map(point => Number(point.aqi) || 0)))
 
 const statusText = computed(() => ({
   live: 'ข้อมูลแบบจำลองล่าสุด',
   stale: 'ข้อมูลที่บันทึกไว้',
-  fallback: 'ข้อมูลสาธิต',
   error: 'เชื่อมต่อไม่ได้',
   loading: 'กำลังโหลด',
-}[props.status] || 'รอตรวจสอบ'))
+}[normalizedStatus.value] || 'รอตรวจสอบ'))
 
 const healthAdvice = computed(() => {
   const aqi = Number(selectedStation.value?.aqi) || 0

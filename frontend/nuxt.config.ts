@@ -44,18 +44,10 @@ export default defineNuxtConfig({
       cleanupOutdatedCaches: true,
       clientsClaim: true,
       skipWaiting: true,
-      runtimeCaching: [
-        {
-          urlPattern: /\/api\/dashboard\//,
-          handler: 'NetworkFirst',
-          options: {
-            cacheName: 'dashboard-api',
-            networkTimeoutSeconds: 5,
-            expiration: { maxEntries: 30, maxAgeSeconds: 600 },
-            cacheableResponse: { statuses: [0, 200] },
-          },
-        },
-      ],
+      // Dashboard responses are never cached by the service worker. The
+      // server may return a short-lived stale cache only when it came from a
+      // real upstream API and labels that response explicitly.
+      runtimeCaching: [],
     },
     devOptions: {
       enabled: false,

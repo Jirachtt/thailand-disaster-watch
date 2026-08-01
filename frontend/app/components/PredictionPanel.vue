@@ -5,7 +5,7 @@
         <span class="material-symbols-rounded" aria-hidden="true">model_training</span>
       </div>
       <div>
-        <h3 id="water-forecast-title" class="card-title">แนวโน้มระดับน้ำ 12 ชั่วโมง</h3>
+        <h3 id="water-forecast-title" class="card-title">แนวโน้มระดับน้ำ 6 ชั่วโมง</h3>
         <p class="card-subtitle">{{ station?.name || 'เลือกสถานีเพื่อดูพยากรณ์' }}</p>
       </div>
     </div>
@@ -21,11 +21,11 @@
       </div>
       <div class="prediction-row">
         <span class="prediction-label">เวลาถึงค่าสูงสุด</span>
-        <span class="prediction-value">{{ peakHours > 0 ? `ประมาณ ${peakHours} ชม.` : 'ทรงตัว/ลดลง' }}</span>
+        <span class="prediction-value">{{ !hasForecast ? 'ยังคำนวณไม่ได้' : peakHours > 0 ? `ประมาณ ${peakHours} ชม.` : 'ทรงตัว/ลดลง' }}</span>
       </div>
       <div class="prediction-row">
         <span class="prediction-label">ความเชื่อมั่นของแบบจำลอง</span>
-        <span class="prediction-value forecast-confidence">{{ confidence }}%</span>
+        <span class="prediction-value forecast-confidence">{{ confidence === null ? '—' : `${confidence}%` }}</span>
       </div>
       <div class="prediction-row">
         <span class="prediction-label">สถานการณ์จาก ThaiWater</span>
@@ -37,7 +37,7 @@
       </div>
       <p class="model-note">
         <span class="material-symbols-rounded" aria-hidden="true">info</span>
-        คำนวณจากแนวโน้มเซ็นเซอร์และฝนใกล้เคียง ความแม่นยำลดลงตามระยะเวลา และไม่ใช่คำสั่งอพยพ
+        คำนวณจากระดับน้ำและแนวโน้มล่าสุดของ ThaiWater เป็นค่าประเมินเชิงทดลอง ไม่ใช่ค่าพยากรณ์จากหน่วยงานหรือคำสั่งอพยพ
       </p>
     </div>
     <div v-else class="module-empty compact">
@@ -52,16 +52,21 @@ const props = defineProps({
   station: { type: Object, default: null },
 })
 
-const hasData = computed(() => Number.isFinite(Number(props.station?.currentLevel)))
-const currentLevel = computed(() => Number(props.station?.currentLevel))
-const peakPredicted = computed(() => Number.isFinite(Number(props.station?.peakPredicted))
+const hasData = computed(() => props.station?.currentLevel != null && Number.isFinite(Number(props.station.currentLevel)))
+const currentLevel = computed(() => hasData.value ? Number(props.station.currentLevel) : null)
+const peakPredicted = computed(() => props.station?.peakPredicted != null && Number.isFinite(Number(props.station.peakPredicted))
   ? Number(props.station.peakPredicted)
-  : currentLevel.value)
+  : null)
+const hasForecast = computed(() => peakPredicted.value !== null)
 const riskLevel = computed(() => props.station?.riskLevel || 'safe')
 const riskType = computed(() => props.station?.riskType || 'normal')
 const flowTime = computed(() => Number(props.station?.flowTimeToDownstream) || 0)
 const peakHours = computed(() => Number(props.station?.peakInHours) || 0)
-const confidence = computed(() => Math.round(Number(props.station?.forecastConfidence) || 75))
+const confidence = computed(() => {
+  if (props.station?.forecastConfidence == null) return null
+  const value = Number(props.station?.forecastConfidence)
+  return Number.isFinite(value) ? Math.round(value) : null
+})
 
 const riskLabel = computed(() => props.station?.situationLabel || ({
   danger: 'วิกฤต',

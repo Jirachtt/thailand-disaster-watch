@@ -62,11 +62,10 @@ async function fetchRequestedData(keys: DataKey[]) {
     return datasets
 }
 
-function dataStatus(data: any): 'live' | 'stale' | 'fallback' | 'error' {
+function dataStatus(data: any): 'live' | 'stale' | 'error' {
     if (!data) return 'error'
-    if (data.status === 'error') return 'error'
+    if (data.status === 'error' || data.status === 'fallback' || data.isFallback) return 'error'
     if (data.status === 'stale') return 'stale'
-    if (data.status === 'fallback' || data.isFallback) return 'fallback'
     return 'live'
 }
 
@@ -74,7 +73,6 @@ function statusLabel(data: any): string {
     return {
         live: 'เชื่อมต่อข้อมูลแล้ว',
         stale: 'ข้อมูลล่าสุดที่บันทึกไว้',
-        fallback: 'ข้อมูลสาธิต ไม่ใช่เหตุการณ์ปัจจุบัน',
         error: 'เชื่อมต่อไม่ได้ชั่วคราว',
     }[dataStatus(data)]
 }
@@ -166,12 +164,12 @@ export default defineEventHandler(async (event) => {
         const fireList = topFires.map((fire: any, index: number) =>
             `${index + 1}. ${fire.name} — ระดับ ${fireRiskLabel(fire.intensity)}, FRP ${formatNumber(fire.frp)} MW, พื้นที่ประมาณการ ${formatNumber(fire.areaSqKm, 2)} ตร.กม.`
         ).join('\n')
-        const qualifier = dataStatus(fireData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(fireData)
+        const qualifier = statusLabel(fireData)
 
         let response = `สถานการณ์จุดความร้อนในประเทศไทย (${qualifier})\n\n`
         response += thaiFireCount > 0
-            ? `พบ ${thaiFireCount} กลุ่มที่ผ่านเกณฑ์คัดกรอง\nระดับความเสี่ยงรวม: ${fireRiskLabel(fireData.overallFireRisk)}\n\nจุดสำคัญ:\n${fireList}`
-            : 'ไม่พบกลุ่มจุดความร้อนที่ผ่านเกณฑ์คัดกรองในชุดข้อมูลประเทศไทยล่าสุด'
+            ? `พบ ${thaiFireCount} กลุ่มจากจุดตรวจจับ FIRMS ล่าสุด\nระดับความเสี่ยงรวม: ${fireRiskLabel(fireData.overallFireRisk)}\n\nจุดสำคัญ:\n${fireList}`
+            : 'ไม่พบจุดความร้อนในชุดข้อมูล FIRMS สำหรับประเทศไทยล่าสุด'
 
         const peak = topFires[0]?.peakEstimate
         if (peak) response += `\n\nแนวโน้ม 12 ชม.: พื้นที่ประมาณการ ${formatNumber(peak.areaSqKm, 2)} ตร.กม. รัศมี ${formatNumber(peak.radiusKm, 2)} กม.`
@@ -191,7 +189,7 @@ export default defineEventHandler(async (event) => {
         const stationList = notableStations.map((station: any, index: number) =>
             `${index + 1}. ${station.name} — ${station.situationLabel || waterRiskLabel(station.riskLevel)}, ระดับ ${formatNumber(station.currentLevel, 2)} ม.`
         ).join('\n')
-        const qualifier = dataStatus(waterData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(waterData)
+        const qualifier = statusLabel(waterData)
 
         let response = `สถานการณ์ระดับน้ำ (${qualifier})\n\n`
         response += `สถานีในชุดข้อมูล: ${stations.length} แห่ง\nระดับความเสี่ยงรวม: ${waterRiskLabel(waterData.overallRisk)}\nสถานีวิกฤต: ${criticalStations.length} แห่ง\nสถานีเฝ้าระวัง: ${warningStations.length} แห่ง`
@@ -210,7 +208,7 @@ export default defineEventHandler(async (event) => {
         const rainList = rainStations.slice(0, 5).map((station: any, index: number) =>
             `${index + 1}. ${station.name}${station.province ? ` (${station.province})` : ''} — ${formatNumber(station.rain24h)} มม. ใน 24 ชม.`
         ).join('\n')
-        const qualifier = dataStatus(rainData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(rainData)
+        const qualifier = statusLabel(rainData)
 
         let response = `สถานการณ์ฝน (${qualifier})\n\nสถานีที่ผ่านเกณฑ์ฝน: ${rainStations.length} แห่ง\nฝนหนักถึงหนักมาก: ${heavyStations.length} แห่ง`
         if (rainList) response += `\n\nสถานีฝนสะสมสูงสุด:\n${rainList}`
@@ -229,7 +227,7 @@ export default defineEventHandler(async (event) => {
         const aqiList = sortedStations.slice(0, 8).map((station: any, index: number) =>
             `${index + 1}. ${station.name} — AQI ${formatNumber(station.aqi, 0)} (${station.label}), PM2.5 ${formatNumber(station.pm25)} µg/m³`
         ).join('\n')
-        const qualifier = dataStatus(aqiData) === 'fallback' ? 'ชุดข้อมูลสาธิต' : statusLabel(aqiData)
+        const qualifier = statusLabel(aqiData)
 
         let response = `คุณภาพอากาศ (${qualifier})\n\nพื้นที่ในชุดข้อมูล: ${stations.length} แห่ง`
         if (worstAqi) response += `\nค่าสูงสุด: ${worstAqi.name} — AQI ${formatNumber(worstAqi.aqi, 0)} (${worstAqi.label})`
@@ -275,6 +273,6 @@ export default defineEventHandler(async (event) => {
         summaryLines.unshift('ระบบนี้ไม่สามารถยืนยันว่าแต่ละพิกัด “ปลอดภัย” ได้ โปรดตรวจประกาศจากหน่วยงานท้องถิ่นก่อนตัดสินใจเดินทาง', '')
     }
 
-    summaryLines.push('', 'ข้อมูลสาธิตจะไม่ถูกใช้ยืนยันเหตุการณ์จริง และผลพยากรณ์ไม่ใช่คำสั่งอพยพ')
+    summaryLines.push('', 'ระบบแสดงเฉพาะข้อมูลจาก API ที่เชื่อมต่อได้โดยไม่สร้างเหตุการณ์ทดแทน และผลพยากรณ์ไม่ใช่คำสั่งอพยพ')
     return { response: summaryLines.join('\n') }
 })

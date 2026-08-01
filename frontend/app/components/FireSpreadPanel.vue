@@ -6,12 +6,12 @@
       </div>
       <div>
         <div class="card-title" style="margin-bottom: 0">คาดการณ์การลุกลามของไฟ</div>
-        <div style="font-size: 0.7rem; color: var(--text-muted)">จำนวน {{ fires.length }} จุด</div>
+        <div style="font-size: 0.7rem; color: var(--text-muted)">{{ fireSummaryText }}</div>
       </div>
     </div>
 
     <!-- Fire selector tabs (limited with show more) -->
-    <div class="fire-tabs" v-if="fires.length > 0" role="list" aria-label="รายการจุดความร้อน">
+    <div class="fire-tabs" v-if="displayFires.length > 0" role="list" aria-label="รายการจุดความร้อน">
       <button
         v-for="fire in visibleFires"
         :key="fire.id"
@@ -26,18 +26,26 @@
       </button>
     </div>
     <button
-      v-if="fires.length > 6"
+      v-if="displayFires.length > 6"
       class="show-more-btn"
       @click="showAllFires = !showAllFires"
     >
       <span class="material-symbols-rounded">{{ showAllFires ? 'expand_less' : 'expand_more' }}</span>
-      {{ showAllFires ? 'แสดงน้อยลง' : `ดูเพิ่มเติม (${fires.length - 6} จุด)` }}
+      {{ showAllFires ? 'แสดงน้อยลง' : `ดูเพิ่มเติม (${displayFires.length - 6} จุด)` }}
     </button>
 
     <!-- Empty hint -->
-    <div v-if="fires.length === 0" class="fire-empty">
-      <span class="material-symbols-rounded" style="font-size: 40px; color: var(--text-muted); opacity: 0.5">local_fire_department</span>
-      <p>ไม่พบจุดไฟไหม้ในขณะนี้</p>
+    <div v-if="isUnavailable" class="fire-empty error" role="alert">
+      <span class="material-symbols-rounded" style="font-size: 40px" aria-hidden="true">sync_problem</span>
+      <p>เชื่อมต่อข้อมูลจุดความร้อนจาก NASA FIRMS ไม่ได้</p>
+    </div>
+    <div v-else-if="isLoading" class="fire-empty" role="status" aria-live="polite">
+      <span class="material-symbols-rounded" style="font-size: 40px; color: var(--text-muted); opacity: 0.5" aria-hidden="true">sync</span>
+      <p>กำลังเชื่อมต่อข้อมูลจุดความร้อน</p>
+    </div>
+    <div v-else-if="displayFires.length === 0" class="fire-empty" role="status">
+      <span class="material-symbols-rounded" style="font-size: 40px; color: var(--text-muted); opacity: 0.5" aria-hidden="true">local_fire_department</span>
+      <p>ไม่พบจุดความร้อนในข้อมูลล่าสุด</p>
     </div>
     <div v-else-if="!popupFire" class="fire-hint">
       <span class="material-symbols-rounded" style="font-size: 18px; color: var(--text-muted)">touch_app</span>
@@ -93,7 +101,7 @@
                 <div class="fire-stat-item">
                   <span class="material-symbols-rounded">square_foot</span>
                   <div class="fire-stat-value" style="color: #f97316">{{ popupFire.areaSqKm }} ตร.กม.</div>
-                  <div class="fire-stat-label">พื้นที่ไหม้</div>
+                  <div class="fire-stat-label">พื้นที่ตรวจจับโดยประมาณ</div>
                 </div>
                 <div class="fire-stat-item">
                   <span class="material-symbols-rounded">bolt</span>
@@ -133,6 +141,7 @@
                   <span class="material-symbols-rounded" style="font-size: 16px; color: #f97316">timeline</span>
                   คาดการณ์การลุกลาม
                 </div>
+                <p class="spread-model-note">พื้นที่และคะแนนเป็นผลคำนวณของแบบจำลอง ไม่ใช่ค่าที่ NASA FIRMS ยืนยัน</p>
                 <div class="spread-timeline-grid">
                   <div
                     v-for="pred in popupPredictions"
@@ -147,7 +156,7 @@
                       <div class="confidence-bar">
                         <div class="confidence-fill" :style="{ width: pred.confidence + '%' }"></div>
                       </div>
-                      <span class="confidence-text">{{ pred.confidence }}%</span>
+                      <span class="confidence-text">คะแนนแบบจำลอง {{ pred.confidence }}%</span>
                     </div>
                   </div>
                 </div>
@@ -164,6 +173,7 @@
 const props = defineProps({
   fires: { type: Array, default: () => [] },
   selectedFireId: { type: String, default: null },
+  status: { type: String, default: 'loading' },
 })
 
 const emit = defineEmits(['selectFire'])
@@ -174,9 +184,20 @@ const popupDialog = ref(null)
 const closeButton = ref(null)
 let lastTrigger = null
 
+const normalizedStatus = computed(() => props.status === 'fallback' ? 'error' : props.status)
+const isUsable = computed(() => ['live', 'stale'].includes(normalizedStatus.value))
+const isUnavailable = computed(() => normalizedStatus.value === 'error')
+const isLoading = computed(() => !isUsable.value && !isUnavailable.value)
+const displayFires = computed(() => isUsable.value ? props.fires : [])
+const fireSummaryText = computed(() => {
+  if (isUnavailable.value) return 'ยังตรวจสอบจำนวนจุดไม่ได้'
+  if (isLoading.value) return 'กำลังตรวจสอบจุดความร้อน'
+  return `จำนวน ${displayFires.value.length} จุด`
+})
+
 const visibleFires = computed(() => {
-  if (showAllFires.value) return props.fires
-  return props.fires.slice(0, 6)
+  if (showAllFires.value) return displayFires.value
+  return displayFires.value.slice(0, 6)
 })
 
 const popupPredictions = computed(() => {
@@ -184,6 +205,12 @@ const popupPredictions = computed(() => {
   return popupFire.value.predictions.filter((p) =>
     [1, 3, 6, 12].includes(p.hoursFromNow)
   )
+})
+
+watch(isUsable, (usable) => {
+  if (usable) return
+  popupFire.value = null
+  lastTrigger = null
 })
 
 function openFirePopup(fire, event) {
@@ -373,6 +400,10 @@ function getProvinceFromCoords(lat, lng) {
   padding: 1rem 0;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+.fire-empty.error {
+  color: var(--color-danger);
 }
 
 /* ============================================
@@ -621,6 +652,13 @@ function getProvinceFromCoords(lat, lng) {
   letter-spacing: 0.04em;
 }
 
+.spread-model-note {
+  margin: -0.25rem 0 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
 .spread-timeline-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -662,13 +700,14 @@ function getProvinceFromCoords(lat, lng) {
 
 .spread-step-confidence {
   display: flex;
+  flex-direction: column;
   align-items: center;
   gap: 4px;
   justify-content: center;
 }
 
 .confidence-bar {
-  flex: 1;
+  width: 100%;
   height: 3px;
   background: rgba(148, 163, 184, 0.1);
   border-radius: 3px;
@@ -686,6 +725,7 @@ function getProvinceFromCoords(lat, lng) {
   font-size: 0.6rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  line-height: 1.3;
 }
 
 /* Popup transitions */
