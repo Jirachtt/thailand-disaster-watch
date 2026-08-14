@@ -98,15 +98,21 @@ const tabs = [
 
 const activeStationName = computed(() => props.stationName)
 
-const { data: tsData, pending, error, refresh } = useFetch(
-  () => `/api/dashboard/timeseries/${encodeURIComponent(props.stationId)}`,
-  {
-    server: false,
-    lazy: true,
-    watch: [() => props.stationId],
-    timeout: 10000,
-  },
+const { data: tsData, pending, error, refresh } = useResilientFetch(
+  () => props.stationId
+    ? `/api/dashboard/timeseries/${encodeURIComponent(props.stationId)}`
+    : '',
+  { timeout: 10000 },
 )
+
+function loadSelectedStation() {
+  if (chartInstance) {
+    chartInstance.destroy()
+    chartInstance = null
+  }
+  tsData.value = null
+  return refresh()
+}
 
 const isUnavailable = computed(() => Boolean(error.value)
   || ['error', 'fallback'].includes(tsData.value?.status)
@@ -265,9 +271,17 @@ function buildChart() {
   })
 }
 
+watch(() => props.stationId, (stationId, previousStationId) => {
+  if (!import.meta.client || stationId === previousStationId) return
+  void loadSelectedStation()
+})
+
 watch([tsData, activeTab], () => nextTick(buildChart), { deep: true })
 
-onMounted(() => nextTick(buildChart))
+onMounted(() => {
+  void loadSelectedStation()
+  nextTick(buildChart)
+})
 onUnmounted(() => chartInstance?.destroy())
 </script>
 

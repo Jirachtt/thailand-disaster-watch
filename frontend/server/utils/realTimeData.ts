@@ -459,7 +459,11 @@ async function fetchRealFireDataInternal() {
         setCache('fires', result)
         return result
     } catch (error: any) {
-        console.error('[FIRMS] API error:', error.message)
+        // FIRMS embeds the private MAP_KEY in the request path. ofetch error
+        // messages may include that full URL, so log only a numeric status and
+        // never the upstream message/request object.
+        const status = Number(error?.statusCode ?? error?.status ?? error?.response?.status)
+        console.error('[FIRMS] API request failed', Number.isFinite(status) ? `(HTTP ${status})` : '(network error)')
         return getUnavailableFireDashboard('เชื่อมต่อ NASA FIRMS ไม่สำเร็จ')
     }
 }

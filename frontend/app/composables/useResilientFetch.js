@@ -21,6 +21,9 @@ export function useResilientFetch(url, options = {}) {
   const error = shallowRef(null)
 
   let activeRequest = null
+  let activeRequestUrl = ''
+  let activeController = null
+  let requestRevision = 0
   let disposed = false
 
   async function waitBeforeRetry() {
@@ -30,7 +33,29 @@ export function useResilientFetch(url, options = {}) {
 
   function refresh() {
     if (disposed) return Promise.resolve(data.value)
-    if (activeRequest) return activeRequest
+
+    const requestUrl = typeof url === 'function' ? url() : url
+    if (typeof requestUrl !== 'string' || !requestUrl) {
+      requestRevision += 1
+      activeController?.abort()
+      activeRequest = null
+      activeRequestUrl = ''
+      activeController = null
+      pending.value = false
+      return Promise.resolve(null)
+    }
+
+    if (activeRequest && activeRequestUrl === requestUrl) return activeRequest
+
+    // A reactive URL can change while its previous request is still running
+    // (for example when a different water station is selected). Abort that
+    // request and guard every state write with a revision so a late response
+    // can never overwrite the newly selected station.
+    activeController?.abort()
+    const controller = new AbortController()
+    const revision = ++requestRevision
+    activeController = controller
+    activeRequestUrl = requestUrl
 
     pending.value = true
     error.value = null
@@ -39,27 +64,36 @@ export function useResilientFetch(url, options = {}) {
       let lastError = null
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        if (disposed || revision !== requestRevision) break
         try {
-          const response = await $fetch(url, {
+          const response = await $fetch(requestUrl, {
             timeout,
             retry: 0,
             ...options.fetchOptions,
+            signal: controller.signal,
           })
-          if (!disposed) data.value = response
+          if (!disposed && revision === requestRevision) data.value = response
           return response
         } catch (requestError) {
           lastError = requestError
-          const canRetry = !disposed && attempt < maxAttempts && isRetryableRequestError(requestError)
+          const canRetry = !disposed
+            && revision === requestRevision
+            && attempt < maxAttempts
+            && isRetryableRequestError(requestError)
           if (!canRetry) break
           await waitBeforeRetry()
         }
       }
 
-      if (!disposed) error.value = lastError
+      if (!disposed && revision === requestRevision) error.value = lastError
       return null
     })().finally(() => {
-      if (!disposed) pending.value = false
-      if (activeRequest === request) activeRequest = null
+      if (!disposed && revision === requestRevision) pending.value = false
+      if (activeRequest === request) {
+        activeRequest = null
+        activeRequestUrl = ''
+        activeController = null
+      }
     })
 
     activeRequest = request
@@ -68,8 +102,12 @@ export function useResilientFetch(url, options = {}) {
 
   onScopeDispose(() => {
     disposed = true
+    requestRevision += 1
+    activeController?.abort()
     pending.value = false
     activeRequest = null
+    activeRequestUrl = ''
+    activeController = null
   })
 
   return { data, pending, error, refresh }

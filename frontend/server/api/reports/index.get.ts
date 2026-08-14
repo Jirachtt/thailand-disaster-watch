@@ -14,8 +14,7 @@ async function getPrisma() {
 export default defineEventHandler(async () => {
     const db = await getPrisma()
     if (!db) {
-        // No database available (e.g. Vercel serverless) — return empty
-        return { reports: [], source: 'no-db' }
+        throw createError({ statusCode: 503, statusMessage: 'Report storage is unavailable' })
     }
 
     try {
@@ -24,8 +23,8 @@ export default defineEventHandler(async () => {
             take: 100
         })
         return { reports }
-    } catch (error) {
-        console.error('Error fetching reports:', error)
-        return { reports: [], source: 'error' }
+    } catch {
+        console.error('[Reports] Read failed')
+        throw createError({ statusCode: 503, statusMessage: 'Report storage is unavailable' })
     }
 })

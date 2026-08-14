@@ -2,11 +2,11 @@
   <div class="glass-card fire-panel">
     <div class="fire-panel-header">
       <div class="fire-panel-icon">
-        <span class="material-symbols-rounded">local_fire_department</span>
+        <span class="material-symbols-rounded" aria-hidden="true">local_fire_department</span>
       </div>
       <div>
-        <div class="card-title" style="margin-bottom: 0">คาดการณ์การลุกลามของไฟ</div>
-        <div style="font-size: 0.7rem; color: var(--text-muted)">{{ fireSummaryText }}</div>
+        <div class="card-title fire-panel-title">คาดการณ์การลุกลามของไฟ</div>
+        <div class="fire-panel-summary">{{ fireSummaryText }}</div>
       </div>
     </div>
 
@@ -27,6 +27,7 @@
     </div>
     <button
       v-if="displayFires.length > 6"
+      type="button"
       class="show-more-btn"
       @click="showAllFires = !showAllFires"
     >
@@ -36,19 +37,19 @@
 
     <!-- Empty hint -->
     <div v-if="isUnavailable" class="fire-empty error" role="alert">
-      <span class="material-symbols-rounded" style="font-size: 40px" aria-hidden="true">sync_problem</span>
+      <span class="material-symbols-rounded fire-state-icon" aria-hidden="true">sync_problem</span>
       <p>เชื่อมต่อข้อมูลจุดความร้อนจาก NASA FIRMS ไม่ได้</p>
     </div>
     <div v-else-if="isLoading" class="fire-empty" role="status" aria-live="polite">
-      <span class="material-symbols-rounded" style="font-size: 40px; color: var(--text-muted); opacity: 0.5" aria-hidden="true">sync</span>
+      <span class="material-symbols-rounded fire-state-icon muted" aria-hidden="true">sync</span>
       <p>กำลังเชื่อมต่อข้อมูลจุดความร้อน</p>
     </div>
     <div v-else-if="displayFires.length === 0" class="fire-empty" role="status">
-      <span class="material-symbols-rounded" style="font-size: 40px; color: var(--text-muted); opacity: 0.5" aria-hidden="true">local_fire_department</span>
+      <span class="material-symbols-rounded fire-state-icon muted" aria-hidden="true">local_fire_department</span>
       <p>ไม่พบจุดความร้อนในข้อมูลล่าสุด</p>
     </div>
     <div v-else-if="!popupFire" class="fire-hint">
-      <span class="material-symbols-rounded" style="font-size: 18px; color: var(--text-muted)">touch_app</span>
+      <span class="material-symbols-rounded fire-hint-icon" aria-hidden="true">touch_app</span>
       <span>กดจุดไฟด้านบนเพื่อดูรายละเอียดและตำแหน่ง</span>
     </div>
 
@@ -69,13 +70,13 @@
 
             <!-- Location -->
             <div class="fire-location">
-              <span class="material-symbols-rounded" style="font-size: 16px; color: #f97316">location_on</span>
+              <span class="material-symbols-rounded fire-accent-icon" aria-hidden="true">location_on</span>
               <div>
                 <div class="fire-location-name">{{ popupFire.province || getProvinceFromCoords(popupFire.lat, popupFire.lng) }}</div>
                 <div class="fire-location-coords">{{ popupFire.lat.toFixed(4) }}°N, {{ popupFire.lng.toFixed(4) }}°E</div>
               </div>
-              <button class="fly-to-btn" @click="flyToFire" title="ดูบนแผนที่">
-                <span class="material-symbols-rounded">my_location</span>
+              <button type="button" class="fly-to-btn" aria-label="ดูตำแหน่งจุดความร้อนบนแผนที่" @click="flyToFire" title="ดูบนแผนที่">
+                <span class="material-symbols-rounded" aria-hidden="true">my_location</span>
               </button>
             </div>
 
@@ -100,7 +101,7 @@
                 </div>
                 <div class="fire-stat-item">
                   <span class="material-symbols-rounded">square_foot</span>
-                  <div class="fire-stat-value" style="color: #f97316">{{ popupFire.areaSqKm }} ตร.กม.</div>
+                    <div class="fire-stat-value fire-value-accent">{{ popupFire.areaSqKm }} ตร.กม.</div>
                   <div class="fire-stat-label">พื้นที่ตรวจจับโดยประมาณ</div>
                 </div>
                 <div class="fire-stat-item">
@@ -138,7 +139,7 @@
               <!-- Spread Predictions -->
               <div class="spread-timeline" v-if="popupPredictions.length > 0">
                 <div class="spread-timeline-title">
-                  <span class="material-symbols-rounded" style="font-size: 16px; color: #f97316">timeline</span>
+                  <span class="material-symbols-rounded fire-accent-icon" aria-hidden="true">timeline</span>
                   คาดการณ์การลุกลาม
                 </div>
                 <p class="spread-model-note">พื้นที่และคะแนนเป็นผลคำนวณของแบบจำลอง ไม่ใช่ค่าที่ NASA FIRMS ยืนยัน</p>
@@ -290,66 +291,79 @@ function getProvinceFromCoords(lat, lng) {
 
 <style scoped>
 .fire-panel {
-  border-color: rgba(249, 115, 22, 0.15);
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--color-fire) 18%, var(--border-subtle));
+  background: var(--bg-card);
+  transition: border-color 200ms ease, box-shadow 220ms ease;
 }
 
 .fire-panel:hover {
-  border-color: rgba(249, 115, 22, 0.3);
-  box-shadow: var(--shadow-card), 0 0 30px rgba(249, 115, 22, 0.08);
+  border-color: color-mix(in srgb, var(--color-fire) 34%, var(--border-subtle));
+  box-shadow: var(--shadow-elevated);
 }
 
 .fire-panel-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 1rem;
+  gap: 12px;
+  margin-bottom: 1.1rem;
 }
 
 .fire-panel-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  background: rgba(249, 115, 22, 0.12);
-  border: 1px solid rgba(249, 115, 22, 0.25);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #f97316;
-  font-size: 20px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--color-fire) 22%, transparent);
+  border-radius: 14px;
+  color: var(--color-fire);
+  background: var(--color-fire-bg);
 }
+
+.fire-panel-icon .material-symbols-rounded { font-size: 22px; }
+.fire-panel-title { margin-bottom: 0; font-family: var(--font-serif, Georgia, serif); font-weight: 500; }
+.fire-panel-summary { margin-top: 2px; color: var(--text-muted); font-size: .7rem; line-height: 1.45; }
 
 .fire-tabs {
   display: flex;
-  gap: 0.4rem;
-  margin-bottom: 0.5rem;
+  gap: .45rem;
+  margin-bottom: .65rem;
   flex-wrap: wrap;
 }
 
 .fire-tab {
-  padding: 5px 12px;
-  border-radius: 20px;
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  background: transparent;
+  min-height: 44px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   font-family: inherit;
 }
 
 .fire-tab:hover {
-  color: var(--text-secondary);
-  border-color: rgba(249, 115, 22, 0.3);
+  color: var(--color-fire);
+  border-color: color-mix(in srgb, var(--color-fire) 38%, var(--border-subtle));
+  background: var(--color-fire-bg);
+  transform: translateY(-1px);
 }
 
 .fire-tab.active {
-  background: rgba(249, 115, 22, 0.1);
-  color: #f97316;
-  border-color: rgba(249, 115, 22, 0.4);
+  background: var(--color-fire-bg);
+  color: var(--color-fire);
+  border-color: color-mix(in srgb, var(--color-fire) 58%, var(--border-subtle));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-fire) 13%, transparent);
 }
 
 .fire-tab-dot {
@@ -370,22 +384,23 @@ function getProvinceFromCoords(lat, lng) {
   justify-content: center;
   gap: 4px;
   width: 100%;
-  padding: 6px 0;
+  min-height: 44px;
+  padding: 7px 12px;
   margin-top: 0.25rem;
-  background: transparent;
+  background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  color: #f97316;
+  color: var(--color-fire);
   font-size: 0.72rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease;
   font-family: inherit;
 }
 
 .show-more-btn:hover {
-  background: rgba(249, 115, 22, 0.06);
-  border-color: rgba(249, 115, 22, 0.3);
+  background: var(--color-fire-bg);
+  border-color: color-mix(in srgb, var(--color-fire) 38%, var(--border-subtle));
 }
 
 .show-more-btn .material-symbols-rounded {
@@ -397,14 +412,25 @@ function getProvinceFromCoords(lat, lng) {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 1rem 0;
+  min-height: 132px;
+  padding: 1.25rem;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 14px;
+  background: var(--bg-primary);
   font-size: 0.78rem;
   color: var(--text-muted);
+  text-align: center;
 }
 
 .fire-empty.error {
   color: var(--color-danger);
+  background: var(--color-danger-bg);
+  border-color: color-mix(in srgb, var(--color-danger) 24%, transparent);
 }
+
+.fire-state-icon { font-size: 36px; }
+.fire-state-icon.muted { color: var(--text-muted); opacity: .58; }
+.fire-hint-icon { color: var(--text-muted); font-size: 20px; }
 
 /* ============================================
    POPUP MODAL
@@ -414,46 +440,58 @@ function getProvinceFromCoords(lat, lng) {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
+  background: rgba(31, 29, 26, .58);
+  backdrop-filter: blur(8px) saturate(90%);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem;
+  padding: clamp(12px, 3vw, 28px);
 }
 
 .fire-popup {
-  background: var(--bg-secondary);
-  border: 1px solid rgba(249, 115, 22, 0.3);
-  border-radius: var(--radius-lg);
   width: 100%;
-  max-width: 560px;
-  max-height: 80vh;
+  max-width: 620px;
+  max-height: min(88dvh, 820px);
   overflow-y: auto;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(249, 115, 22, 0.1);
+  border: 1px solid color-mix(in srgb, var(--color-fire) 24%, var(--border-subtle));
+  border-radius: var(--radius-xl, 22px);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-elevated);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 .fire-popup-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 1.25rem;
+  gap: 1rem;
+  padding: 1rem 1.2rem;
   border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--bg-card) 94%, transparent);
+  backdrop-filter: blur(16px);
 }
 
 .fire-popup-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 1rem;
-  font-weight: 700;
-  color: #f97316;
+  min-width: 0;
+  color: var(--color-fire);
+  font-family: var(--font-serif, Georgia, serif);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .popup-close {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: 13px;
   border: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-muted);
@@ -461,12 +499,14 @@ function getProvinceFromCoords(lat, lng) {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
 .popup-close:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--bg-card-hover);
+  border-color: var(--border);
   color: var(--text-primary);
+  transform: rotate(3deg);
 }
 
 .popup-close .material-symbols-rounded {
@@ -474,16 +514,16 @@ function getProvinceFromCoords(lat, lng) {
 }
 
 .fire-popup-body {
-  padding: 1.25rem;
+  padding: 1.2rem;
 }
 
 /* Location */
 .fire-location {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0.6rem 1.25rem;
-  background: rgba(249, 115, 22, 0.06);
+  gap: 10px;
+  padding: .75rem 1.2rem;
+  background: var(--color-fire-bg);
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -499,25 +539,29 @@ function getProvinceFromCoords(lat, lng) {
   font-variant-numeric: tabular-nums;
 }
 
+.fire-accent-icon { color: var(--color-fire); font-size: 18px; }
+.fire-value-accent { color: var(--color-fire); }
+
 .fly-to-btn {
   margin-left: auto;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  border: 1px solid rgba(249, 115, 22, 0.3);
-  background: rgba(249, 115, 22, 0.1);
-  color: #f97316;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--color-fire) 30%, var(--border-subtle));
+  background: var(--bg-card);
+  color: var(--color-fire);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms ease;
   flex-shrink: 0;
 }
 
 .fly-to-btn:hover {
-  background: rgba(249, 115, 22, 0.2);
-  border-color: #f97316;
+  background: color-mix(in srgb, var(--color-fire-bg) 86%, var(--bg-card));
+  border-color: var(--color-fire);
+  transform: translateY(-1px);
 }
 
 .fly-to-btn .material-symbols-rounded {
@@ -529,7 +573,8 @@ function getProvinceFromCoords(lat, lng) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
 }
 
 .fire-intensity-badge {
@@ -540,30 +585,33 @@ function getProvinceFromCoords(lat, lng) {
 }
 
 .fire-intensity-badge.extreme {
-  background: rgba(220, 38, 38, 0.12);
-  color: #dc2626;
-  border: 1px solid rgba(220, 38, 38, 0.3);
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 32%, transparent);
 }
 
 .fire-intensity-badge.high {
-  background: rgba(249, 115, 22, 0.12);
-  color: #f97316;
-  border: 1px solid rgba(249, 115, 22, 0.3);
+  background: var(--color-fire-bg);
+  color: var(--color-fire);
+  border: 1px solid color-mix(in srgb, var(--color-fire) 32%, transparent);
 }
 
 .fire-intensity-badge.medium {
   background: var(--color-warning-bg);
   color: var(--color-warning);
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 32%, transparent);
 }
 
 .fire-intensity-badge.low {
   background: var(--color-safe-bg);
   color: var(--color-safe);
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  border: 1px solid color-mix(in srgb, var(--color-safe) 32%, transparent);
 }
 
 .fire-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-secondary);
@@ -579,8 +627,9 @@ function getProvinceFromCoords(lat, lng) {
 
 .fire-stat-item {
   text-align: center;
-  padding: 0.75rem;
-  background: rgba(10, 15, 30, 0.5);
+  min-width: 0;
+  padding: .85rem .65rem;
+  background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
 }
@@ -616,10 +665,11 @@ function getProvinceFromCoords(lat, lng) {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(10, 15, 30, 0.5);
+  min-width: 0;
+  background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  padding: 0.5rem;
+  padding: .7rem;
 }
 
 .fire-weather-item .material-symbols-rounded {
@@ -648,8 +698,7 @@ function getProvinceFromCoords(lat, lng) {
   align-items: center;
   gap: 6px;
   margin-bottom: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: .02em;
 }
 
 .spread-model-note {
@@ -666,7 +715,8 @@ function getProvinceFromCoords(lat, lng) {
 }
 
 .spread-step {
-  background: rgba(10, 15, 30, 0.5);
+  min-width: 0;
+  background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   padding: 0.6rem;
@@ -681,7 +731,7 @@ function getProvinceFromCoords(lat, lng) {
 .spread-step-time {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #f97316;
+  color: var(--color-fire);
   margin-bottom: 4px;
 }
 
@@ -709,7 +759,7 @@ function getProvinceFromCoords(lat, lng) {
 .confidence-bar {
   width: 100%;
   height: 3px;
-  background: rgba(148, 163, 184, 0.1);
+  background: var(--border-subtle);
   border-radius: 3px;
   overflow: hidden;
   max-width: 40px;
@@ -717,7 +767,7 @@ function getProvinceFromCoords(lat, lng) {
 
 .confidence-fill {
   height: 100%;
-  background: #f97316;
+  background: var(--color-fire);
   border-radius: 3px;
 }
 
@@ -728,13 +778,52 @@ function getProvinceFromCoords(lat, lng) {
   line-height: 1.3;
 }
 
-/* Popup transitions */
-.popup-enter-active { transition: all 0.25s ease; }
-.popup-leave-active { transition: all 0.2s ease; }
+.popup-enter-active { transition: opacity 220ms ease; }
+.popup-leave-active { transition: opacity 180ms ease; }
 .popup-enter-from, .popup-leave-to {
   opacity: 0;
 }
 .popup-enter-from .fire-popup, .popup-leave-to .fire-popup {
-  transform: scale(0.95) translateY(10px);
+  transform: scale(.98) translateY(12px);
+}
+.popup-enter-active .fire-popup,
+.popup-leave-active .fire-popup { transition: transform 260ms cubic-bezier(.2, .8, .2, 1), opacity 220ms ease; }
+
+@media (max-width: 700px) {
+  .fire-popup-overlay { align-items: flex-end; padding: 10px; }
+  .fire-popup { max-height: calc(100dvh - 20px); border-radius: 21px; }
+  .fire-popup-header { padding: .85rem 1rem; }
+  .fire-location { padding: .7rem 1rem; }
+  .fire-popup-body { padding: 1rem; }
+  .spread-timeline-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 520px) {
+  .fire-tabs { flex-wrap: nowrap; margin-inline: -1rem; padding: 0 1rem .35rem; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+  .fire-tabs::-webkit-scrollbar { display: none; }
+  .fire-tab { flex: 0 0 auto; scroll-snap-align: start; }
+  .fire-stats-grid,
+  .fire-weather { grid-template-columns: 1fr; }
+  .fire-stat-item { display: grid; grid-template-columns: 24px minmax(0, 1fr); grid-template-areas: 'icon value' 'icon label'; align-items: center; column-gap: .55rem; text-align: left; }
+  .fire-stat-item .material-symbols-rounded { grid-area: icon; margin: 0; }
+  .fire-stat-value { grid-area: value; }
+  .fire-stat-label { grid-area: label; }
+}
+
+@media (max-width: 380px) {
+  .spread-timeline-grid { grid-template-columns: 1fr; }
+  .fire-location-coords { font-size: .62rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fire-panel,
+  .fire-tab,
+  .show-more-btn,
+  .popup-close,
+  .fly-to-btn,
+  .popup-enter-active,
+  .popup-leave-active,
+  .popup-enter-active .fire-popup,
+  .popup-leave-active .fire-popup { transition: none; }
 }
 </style>

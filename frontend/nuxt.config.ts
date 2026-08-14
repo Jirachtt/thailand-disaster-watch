@@ -22,8 +22,8 @@ export default defineNuxtConfig({
       name: 'Thailand Disaster Watch',
       short_name: 'TH Disaster',
       description: 'ระบบติดตามน้ำ ไฟป่า ฝุ่น PM2.5 ฝน และแนวโน้มสถานการณ์ทั่วประเทศไทย',
-      theme_color: '#ffffff',
-      background_color: '#f4f7fb',
+      theme_color: '#f7f5ef',
+      background_color: '#f7f5ef',
       display: 'standalone',
       icons: [
         {
@@ -66,8 +66,13 @@ export default defineNuxtConfig({
       link: [
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
         { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
-        { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Thai:wght@400;500;600;700;800&display=swap' },
+        { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300;6..72,400;6..72,500;6..72,600&family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Noto+Serif+Thai:wght@300;400;500;600&display=swap' },
         { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,1,0' },
+      ],
+      script: [
+        {
+          innerHTML: "try{const t=localStorage.getItem('theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch{}",
+        },
       ],
     },
   },

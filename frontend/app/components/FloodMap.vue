@@ -1,5 +1,5 @@
 <template>
-  <div class="glass-card" style="padding: 0; overflow: hidden; position: relative;">
+  <div class="glass-card map-shell">
     <!-- Map Search Bar -->
     <div class="map-search-bar">
       <span class="material-symbols-rounded" style="font-size: 18px; color: var(--text-muted)">search</span>
@@ -433,6 +433,20 @@
           <span class="control-label">แจ้งเหตุ</span>
         </button>
         <button
+          v-if="reports.length"
+          type="button"
+          class="map-control-btn layer-toggle report-layer-btn"
+          :class="{ active: showReports }"
+          :aria-pressed="showReports"
+          :aria-label="`${showReports ? 'ซ่อน' : 'แสดง'}รายงานชุมชน ${reports.length} รายการ`"
+          @click="showReports = !showReports"
+          title="แสดงหรือซ่อนรายงานจากชุมชน"
+        >
+          <span class="material-symbols-rounded">campaign</span>
+          <span class="control-label">รายงาน {{ reports.length }}</span>
+          <span class="layer-state material-symbols-rounded" aria-hidden="true">{{ showReports ? 'check' : 'add' }}</span>
+        </button>
+        <button
           type="button"
           class="map-control-btn layer-toggle fire-btn"
           :class="{ active: showFires }"
@@ -665,7 +679,7 @@ watch(() => props.focusStation, (newVal) => {
 const showFires = ref(false)
 const showPredictions = ref(false)
 const showWater = ref(false)
-const showReports = ref(true)
+const showReports = ref(false)
 const showRain = ref(false)
 const showRainDirection = ref(false)
 const showAqi = ref(false)
@@ -892,6 +906,14 @@ function getRainIntensityLabel(intensity) {
 </script>
 
 <style scoped>
+.map-shell {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  border-radius: 18px;
+  box-shadow: var(--shadow-card);
+}
+
 /* Station pin markers */
 .station-pin {
   width: 32px;
@@ -1083,7 +1105,7 @@ function getRainIntensityLabel(intensity) {
   z-index: 1000;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .map-control-btn {
@@ -1092,17 +1114,17 @@ function getRainIntensityLabel(intensity) {
   gap: 6px;
   min-height: 44px;
   padding: 7px 11px;
-  border: 1px solid rgba(100, 116, 139, 0.3);
+  border: 1px solid var(--border-subtle);
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.95);
-  color: #334155;
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 0.72rem;
   font-weight: 600;
   font-family: inherit;
-  transition: color 0.2s, background 0.2s, border-color 0.2s;
+  transition: transform var(--transition-normal), color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
   white-space: nowrap;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px rgba(45, 40, 34, .08);
   touch-action: manipulation;
 }
 
@@ -1111,9 +1133,25 @@ function getRainIntensityLabel(intensity) {
 }
 
 .map-control-btn:hover {
-  background: #f1f5f9;
-  border-color: rgba(29, 78, 216, 0.3);
-  color: #1d4ed8;
+  transform: translateY(-1px);
+  background: var(--bg-card-hover);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
+  color: var(--accent);
+}
+
+.map-control-btn.layer-toggle:not(.active) {
+  opacity: .76;
+  box-shadow: none;
+}
+
+.map-control-btn.layer-toggle:not(.active) > .material-symbols-rounded:first-child {
+  color: var(--text-muted);
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.map-control-btn.report-btn {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-subtle));
 }
 
 .map-control-btn:focus-visible,
@@ -1124,10 +1162,10 @@ function getRainIntensityLabel(intensity) {
 }
 
 .map-control-btn.active {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
+  background: var(--text-primary);
+  border-color: var(--text-primary);
   color: #ffffff;
-  box-shadow: 0 2px 6px rgba(29, 78, 216, 0.3);
+  box-shadow: 0 3px 10px rgba(45, 40, 34, .18);
 }
 
 .map-control-btn.active .material-symbols-rounded {
@@ -1136,15 +1174,20 @@ function getRainIntensityLabel(intensity) {
 
 .map-control-btn.fire-btn.active,
 .map-control-btn.fire-prediction-btn.active {
-  background: #c2410c;
-  border-color: #c2410c;
-  box-shadow: 0 2px 8px rgba(194, 65, 12, 0.32);
+  background: var(--color-fire);
+  border-color: var(--color-fire);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-fire) 32%, transparent);
 }
 
 .map-control-btn.water-btn.active {
-  background: #0369a1;
-  border-color: #0369a1;
-  box-shadow: 0 2px 8px rgba(3, 105, 161, 0.3);
+  background: var(--color-water);
+  border-color: var(--color-water);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-water) 30%, transparent);
+}
+
+.map-control-btn.report-layer-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .map-control-btn.active.show-all {
@@ -1202,9 +1245,9 @@ function getRainIntensityLabel(intensity) {
   border: 1px solid var(--border-subtle);
   border-radius: 10px;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, .94);
-  box-shadow: 0 3px 14px rgba(15, 23, 42, .12);
-  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
 }
 .map-overlay-title { color: var(--text-primary); font-size: .7rem; font-weight: 800; margin-bottom: .35rem; }
 .legend-group + .legend-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(100, 116, 139, 0.15); }
@@ -1335,18 +1378,19 @@ function getRainIntensityLabel(intensity) {
 .map-search-bar {
   position: absolute;
   top: 12px;
-  left: 64px;
+  left: 82px;
   z-index: 1001;
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.95);
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 6px 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  max-width: 320px;
-  width: calc(100% - 76px);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+  max-width: 340px;
+  width: calc(100% - 94px);
   min-height: 44px;
 }
 
@@ -1366,8 +1410,8 @@ function getRainIntensityLabel(intensity) {
 }
 
 .map-search-bar:focus-within {
-  border-color: rgba(37, 99, 235, 0.65);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16), 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border-subtle));
+  box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-card);
 }
 
 .map-search-clear {
@@ -1388,14 +1432,14 @@ function getRainIntensityLabel(intensity) {
 .map-search-results {
   position: absolute;
   top: 64px;
-  left: 64px;
+  left: 82px;
   z-index: 1002;
-  background: white;
+  background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  max-width: 320px;
-  width: calc(100% - 76px);
+  border-radius: 10px;
+  box-shadow: var(--shadow-elevated);
+  max-width: 340px;
+  width: calc(100% - 94px);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -1409,7 +1453,7 @@ function getRainIntensityLabel(intensity) {
   cursor: pointer;
   font-size: 0.78rem;
   color: var(--text-primary);
-  background: #ffffff;
+  background: var(--bg-secondary);
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
   transition: background 0.15s;
@@ -1420,41 +1464,33 @@ function getRainIntensityLabel(intensity) {
 }
 
 .map-search-result-item:hover {
-  background: #f1f5f9;
+  background: var(--bg-card-hover);
 }
 
 /* Dark mode overrides for map search */
-[data-theme="dark"] .map-search-bar {
-  background: rgba(30, 41, 59, 0.95);
-  border-color: rgba(71, 85, 105, 0.4);
-}
+[data-theme="dark"] .map-search-bar { background: color-mix(in srgb, var(--bg-secondary) 94%, transparent); }
 
-[data-theme="dark"] .map-search-results {
-  background: #1e293b;
-  border-color: rgba(71, 85, 105, 0.4);
-}
+[data-theme="dark"] .map-search-results { background: var(--bg-secondary); }
 
-[data-theme="dark"] .map-search-result-item:hover {
-  background: rgba(51, 65, 85, 0.5);
-}
+[data-theme="dark"] .map-search-result-item:hover { background: var(--bg-card-hover); }
 
-[data-theme="dark"] .map-search-result-item { background: #1e293b; }
+[data-theme="dark"] .map-search-result-item { background: var(--bg-secondary); }
 
 /* Dark mode for map controls */
 [data-theme="dark"] .map-control-btn {
-  background: rgba(30, 41, 59, 0.95);
-  color: #e2e8f0;
-  border-color: rgba(71, 85, 105, 0.4);
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
 }
 
 [data-theme="dark"] .map-control-btn:hover {
-  background: #334155;
-  color: #93c5fd;
+  background: var(--bg-card-hover);
+  color: var(--accent);
 }
 
 [data-theme="dark"] .map-overlay {
-  background: rgba(30, 41, 59, 0.95);
-  border-color: rgba(71, 85, 105, 0.4);
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  border-color: var(--border-subtle);
 }
 
 [data-theme="dark"] .map-control-btn.active {
@@ -1489,12 +1525,17 @@ function getRainIntensityLabel(intensity) {
   border-color: #4f46e5;
 }
 
+[data-theme="dark"] .map-control-btn.report-layer-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 @media (max-width: 700px) {
   .map-search-bar { left: 8px; right: 8px; top: 8px; max-width: none; width: auto; min-height: 44px; }
   .map-search-results { left: 8px; right: 8px; top: 60px; max-width: none; width: auto; }
-  .map-controls { top: auto; left: 8px; right: 8px; bottom: 8px; flex-direction: row; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
-  .map-controls::-webkit-scrollbar { display: none; }
-  .map-control-btn { flex: 0 0 auto; min-height: 44px; background: rgba(255, 255, 255, .97); }
+  .map-controls { top: auto; left: 8px; right: 8px; bottom: 8px; flex-direction: row; gap: 8px; overflow-x: auto; padding: 0 0 6px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .map-controls::-webkit-scrollbar { height: 4px; }.map-controls::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--border); }
+  .map-control-btn { flex: 0 0 auto; min-height: 44px; background: color-mix(in srgb, var(--bg-secondary) 96%, transparent); }
   .map-overlay { display: none; }
   .flow-direction-label, .fire-alert-label { display: none; }
   :deep(.leaflet-top.leaflet-left) { top: 56px; right: 8px; left: auto; }
@@ -1508,7 +1549,17 @@ function getRainIntensityLabel(intensity) {
 }
 
 [data-theme="dark"] .station-pin {
-  background: #1e293b;
+  background: var(--bg-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .station-pin.warning,
+  .station-pin.danger,
+  .rain-marker,
+  .custom-marker-pulse,
+  .report-pulse,
+  .flow-direction-label,
+  .fire-alert-label { animation: none !important; }
 }
 </style>
 

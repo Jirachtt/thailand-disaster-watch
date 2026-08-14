@@ -10,9 +10,16 @@
             <span class="logo-subtitle">ระบบติดตามน้ำ ไฟ ฝุ่น และพยากรณ์</span>
           </span>
         </NuxtLink>
+        <nav class="header-nav" aria-label="เมนูข้อมูลหลัก">
+          <a href="#map-section">แผนที่</a>
+          <a href="#water-section">น้ำ</a>
+          <a href="#fire-section">ไฟป่า</a>
+          <a href="#air-section">ฝุ่น</a>
+          <a href="#forecast-section">พยากรณ์</a>
+        </nav>
         <div class="header-status">
           <div class="header-time">
-            <span class="material-symbols-rounded" aria-hidden="true">schedule</span>
+            <span class="header-live-dot" aria-hidden="true"></span>
             <span>{{ currentTime }}</span>
           </div>
           <button
@@ -63,7 +70,8 @@ function updateTime() {
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme')
   const preferredTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  applyTheme(savedTheme || preferredTheme)
+  const initialTheme = document.documentElement.getAttribute('data-theme') || savedTheme || preferredTheme
+  applyTheme(initialTheme)
   updateTime()
   timer = setInterval(updateTime, 60000)
 })
