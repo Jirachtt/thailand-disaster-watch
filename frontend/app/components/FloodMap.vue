@@ -1,34 +1,46 @@
 <template>
   <div class="glass-card map-shell">
     <!-- Map Search Bar -->
-    <div class="map-search-bar">
-      <span class="material-symbols-rounded" style="font-size: 18px; color: var(--text-muted)">search</span>
+    <form class="map-search-bar" role="search" :aria-busy="isSearching" @submit.prevent="searchLocation">
+      <span class="map-search-leading material-symbols-rounded" aria-hidden="true">travel_explore</span>
       <input 
         v-model="searchQuery" 
         type="text" 
         class="map-search-input" 
         placeholder="ค้นหาจังหวัด / ประเทศ / สถานที่..." 
         aria-label="ค้นหาสถานที่บนแผนที่"
-        @keydown.enter="searchLocation"
+        aria-controls="map-search-results"
+        :aria-expanded="searchResults.length > 0"
+        autocomplete="off"
+        @input="handleSearchInput"
+        @keydown.esc="closeSearchResults"
       />
-      <button v-if="searchQuery" type="button" class="map-search-clear" aria-label="ล้างคำค้น" @click="searchQuery = ''; searchResults = []">
-        <span class="material-symbols-rounded" aria-hidden="true" style="font-size: 16px">close</span>
+      <button v-if="searchQuery" type="button" class="map-search-action map-search-clear" aria-label="ล้างคำค้น" title="ล้างคำค้น" @click="clearSearch">
+        <span class="material-symbols-rounded" aria-hidden="true">close</span>
       </button>
-    </div>
+      <button type="submit" class="map-search-action map-search-submit" :disabled="!searchQuery.trim() || isSearching" aria-label="ค้นหาบนแผนที่" title="ค้นหาบนแผนที่">
+        <span class="material-symbols-rounded" :class="{ spinning: isSearching }" aria-hidden="true">{{ isSearching ? 'progress_activity' : 'search' }}</span>
+      </button>
+    </form>
     <!-- Search Results Dropdown -->
-    <div v-if="searchResults.length" class="map-search-results">
+    <div v-if="searchResults.length" id="map-search-results" class="map-search-results" role="listbox" aria-label="ผลการค้นหาสถานที่">
       <button
         v-for="(result, idx) in searchResults" 
         :key="idx" 
         type="button"
         class="map-search-result-item"
+        role="option"
         @click="flyToResult(result)"
       >
         <span class="material-symbols-rounded" style="font-size: 16px; color: var(--accent)">place</span>
         <span>{{ result.display_name }}</span>
       </button>
     </div>
-    <div class="map-container">
+    <div v-else-if="searchFeedback" class="map-search-feedback" :class="searchFeedbackType" role="status" aria-live="polite">
+      <span class="material-symbols-rounded" aria-hidden="true">{{ searchFeedbackType === 'error' ? 'error' : 'search_off' }}</span>
+      <span>{{ searchFeedback }}</span>
+    </div>
+    <div class="map-container" @wheel.passive="dismissMapHint" @touchstart.passive="dismissMapHint">
       <ClientOnly>
         <LMap
           ref="map"
@@ -36,12 +48,14 @@
           :center="[13.5, 100.5]"
           :use-global-leaflet="false"
           :options="mapOptions"
+          @ready="handleMapReady"
         >
           <LTileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap"
             :options="{ maxZoom: 18 }"
           />
+          <LControlScale position="bottomleft" :metric="true" :imperial="false" :max-width="120" />
 
           <!-- Station Markers (toggleable) -->
           <template v-if="showWater">
@@ -417,8 +431,68 @@
               </LPopup>
             </LMarker>
           </template>
+
+          <!-- Device location stays independent from disaster-data layers. -->
+          <template v-if="userLocation">
+            <LCircle
+              :lat-lng="[userLocation.lat, userLocation.lng]"
+              :radius="Math.max(userLocation.accuracy, 20)"
+              :options="userAccuracyOptions"
+            />
+            <LCircleMarker
+              :lat-lng="[userLocation.lat, userLocation.lng]"
+              :radius="9"
+              :options="userLocationOptions"
+            >
+              <LPopup :options="{ closeButton: true, className: 'dark-popup' }">
+                <div class="popup-content">
+                  <div class="popup-name" style="color: #2563eb">ตำแหน่งของฉัน</div>
+                  <div class="popup-type">ความแม่นยำประมาณ {{ Math.round(userLocation.accuracy) }} เมตร</div>
+                </div>
+              </LPopup>
+            </LCircleMarker>
+          </template>
         </LMap>
       </ClientOnly>
+
+      <!-- Navigation tools are separate from data-layer toggles. -->
+      <div class="map-utility-controls" role="group" aria-label="เครื่องมือนำทางแผนที่">
+        <button
+          type="button"
+          class="map-utility-button"
+          aria-label="กลับไปมุมมองประเทศไทย"
+          title="กลับไปมุมมองประเทศไทย"
+          @click="resetMapView"
+        >
+          <span class="material-symbols-rounded" aria-hidden="true">home</span>
+        </button>
+        <button
+          type="button"
+          class="map-utility-button"
+          :disabled="isLocating"
+          :aria-busy="isLocating"
+          aria-label="ใช้ตำแหน่งปัจจุบัน"
+          title="ใช้ตำแหน่งปัจจุบัน"
+          @click="locateUser"
+        >
+          <span class="material-symbols-rounded" :class="{ spinning: isLocating }" aria-hidden="true">{{ isLocating ? 'progress_activity' : 'my_location' }}</span>
+        </button>
+      </div>
+
+      <div class="map-message-stack" aria-live="polite" aria-atomic="true">
+        <Transition name="map-message">
+          <div v-if="mapFeedback" class="map-feedback" :class="mapFeedback.type" :role="mapFeedback.type === 'error' ? 'alert' : 'status'">
+            <span class="material-symbols-rounded" aria-hidden="true">{{ mapFeedbackIcon }}</span>
+            <span>{{ mapFeedback.message }}</span>
+          </div>
+        </Transition>
+        <Transition name="map-message">
+          <div v-if="showMapHint" class="map-interaction-hint" role="note">
+            <span class="desktop-map-hint"><span class="material-symbols-rounded" aria-hidden="true">mouse</span> หมุนลูกกลิ้งเพื่อซูม · ลากเพื่อเลื่อน</span>
+            <span class="mobile-map-hint"><span class="material-symbols-rounded" aria-hidden="true">pinch</span> บีบสองนิ้วเพื่อซูม · ลากเพื่อเลื่อน</span>
+          </div>
+        </Transition>
+      </div>
 
       <!-- Map Controls (top-right) -->
       <div class="map-controls" role="group" aria-label="เลือกชั้นข้อมูลบนแผนที่">
@@ -612,36 +686,235 @@ const props = defineProps({
 
 defineEmits(['selectStation', 'selectFire', 'add-report'])
 
+const THAILAND_CENTER = [13.5, 100.5]
+const THAILAND_ZOOM = 6
+
 const map = ref(null)
+const leafletMap = shallowRef(null)
 const searchQuery = ref('')
 const searchResults = ref([])
+const searchFeedback = ref('')
+const searchFeedbackType = ref('info')
+const isSearching = ref(false)
+const isLocating = ref(false)
+const userLocation = shallowRef(null)
+const mapFeedback = shallowRef(null)
+const showMapHint = ref(false)
+
+let searchController = null
+let feedbackTimer = null
+let mapHintTimer = null
+
+const userAccuracyOptions = {
+  color: '#2563eb',
+  fillColor: '#3b82f6',
+  fillOpacity: 0.1,
+  weight: 1.5,
+  opacity: 0.55,
+  interactive: false,
+  className: 'user-location-accuracy',
+}
+
+const userLocationOptions = {
+  color: '#ffffff',
+  fillColor: '#2563eb',
+  fillOpacity: 1,
+  weight: 3,
+  opacity: 1,
+  className: 'user-location-marker',
+}
+
+const mapFeedbackIcon = computed(() => ({
+  success: 'check_circle',
+  error: 'error',
+  info: 'info',
+}[mapFeedback.value?.type] || 'info'))
+
+function getLeafletMap() {
+  return leafletMap.value || map.value?.leafletObject || null
+}
+
+function prefersReducedMotion() {
+  return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function moveMapTo(lat, lng, zoom, duration = 0.8) {
+  const instance = getLeafletMap()
+  if (!instance) return false
+
+  instance.stop()
+  if (prefersReducedMotion()) instance.setView([lat, lng], zoom, { animate: false })
+  else instance.flyTo([lat, lng], zoom, { duration })
+  return true
+}
+
+function syncMapMetadata() {
+  const instance = getLeafletMap()
+  if (!instance) return
+  const center = instance.getCenter()
+  const container = instance.getContainer()
+  container.dataset.mapZoom = String(instance.getZoom())
+  container.dataset.mapLat = center.lat.toFixed(5)
+  container.dataset.mapLng = center.lng.toFixed(5)
+}
+
+function showMapFeedback(message, type = 'info', duration = 4500) {
+  if (feedbackTimer) clearTimeout(feedbackTimer)
+  mapFeedback.value = { message, type }
+  feedbackTimer = setTimeout(() => {
+    mapFeedback.value = null
+    feedbackTimer = null
+  }, duration)
+}
+
+function dismissMapHint() {
+  if (!showMapHint.value) return
+  showMapHint.value = false
+  if (mapHintTimer) clearTimeout(mapHintTimer)
+  mapHintTimer = null
+  try {
+    sessionStorage.setItem('map-interaction-hint-seen', '1')
+  } catch {
+    // Session storage can be unavailable in private browsing contexts.
+  }
+}
+
+function handleLocationFound(event) {
+  isLocating.value = false
+  const accuracy = Number.isFinite(event.accuracy) ? event.accuracy : 0
+  userLocation.value = {
+    lat: event.latlng.lat,
+    lng: event.latlng.lng,
+    accuracy,
+  }
+  moveMapTo(event.latlng.lat, event.latlng.lng, 13, 0.75)
+  showMapFeedback(`พบตำแหน่งของคุณ · แม่นยำประมาณ ${Math.round(accuracy)} เมตร`, 'success')
+}
+
+function handleLocationError(event) {
+  isLocating.value = false
+  const permissionDenied = event?.code === 1 || /permission|denied/i.test(event?.message || '')
+  showMapFeedback(
+    permissionDenied
+      ? 'ยังไม่ได้รับอนุญาตให้ใช้ตำแหน่ง กรุณาอนุญาตจากการตั้งค่าเบราว์เซอร์'
+      : 'ไม่พบตำแหน่งในขณะนี้ กรุณาลองใหม่ในพื้นที่ที่รับสัญญาณได้ดีขึ้น',
+    'error',
+    6500,
+  )
+}
+
+function handleMapReady(instance) {
+  leafletMap.value = instance
+  instance.scrollWheelZoom.enable()
+  instance.keyboard.enable()
+  const container = instance.getContainer()
+  container.setAttribute('aria-label', 'แผนที่สถานการณ์ภัยพิบัติ ใช้ลูกกลิ้งเพื่อซูมและปุ่มลูกศรเพื่อเลื่อนแผนที่')
+  instance.on('zoomend moveend', syncMapMetadata)
+  instance.on('locationfound', handleLocationFound)
+  instance.on('locationerror', handleLocationError)
+  syncMapMetadata()
+
+  const pendingFocus = props.focusStation || props.focusFire
+  if (pendingFocus) moveMapTo(pendingFocus.lat, pendingFocus.lng, 10)
+}
+
+function resetMapView() {
+  searchResults.value = []
+  searchFeedback.value = ''
+  if (moveMapTo(THAILAND_CENTER[0], THAILAND_CENTER[1], THAILAND_ZOOM, 0.7)) {
+    showMapFeedback('กลับสู่ภาพรวมประเทศไทยแล้ว', 'success', 3000)
+  } else {
+    showMapFeedback('แผนที่ยังไม่พร้อม กรุณาลองอีกครั้ง', 'error')
+  }
+}
+
+function locateUser() {
+  if (isLocating.value) return
+  const instance = getLeafletMap()
+  if (!instance || typeof navigator === 'undefined' || !navigator.geolocation) {
+    showMapFeedback('อุปกรณ์นี้ไม่รองรับการค้นหาตำแหน่ง', 'error')
+    return
+  }
+
+  isLocating.value = true
+  showMapFeedback('กำลังค้นหาตำแหน่งของคุณ…', 'info', 10_000)
+  instance.locate({
+    setView: false,
+    enableHighAccuracy: true,
+    timeout: 10_000,
+    maximumAge: 60_000,
+  })
+}
+
+function handleSearchInput() {
+  searchController?.abort()
+  searchController = null
+  isSearching.value = false
+  searchResults.value = []
+  searchFeedback.value = ''
+}
+
+function closeSearchResults() {
+  searchResults.value = []
+  searchFeedback.value = ''
+}
+
+function clearSearch() {
+  searchController?.abort()
+  searchController = null
+  isSearching.value = false
+  searchQuery.value = ''
+  closeSearchResults()
+}
 
 async function searchLocation() {
-  if (!searchQuery.value.trim()) return
+  const query = searchQuery.value.trim()
+  if (!query || isSearching.value) return
+
+  searchController?.abort()
+  const controller = new AbortController()
+  searchController = controller
+  isSearching.value = true
+  searchResults.value = []
+  searchFeedback.value = ''
+
   try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery.value)}&limit=5&accept-language=th`
-    const results = await $fetch(url, { timeout: 5000 })
-    searchResults.value = results || []
-  } catch (e) {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&accept-language=th`
+    const results = await $fetch(url, { timeout: 7000, retry: 0, signal: controller.signal })
+    if (controller.signal.aborted) return
+    searchResults.value = Array.isArray(results) ? results : []
+    if (!searchResults.value.length) {
+      searchFeedback.value = `ไม่พบสถานที่ “${query}” ลองใช้ชื่อจังหวัดหรือสถานที่ใกล้เคียง`
+      searchFeedbackType.value = 'info'
+    }
+  } catch {
+    if (controller.signal.aborted) return
     searchResults.value = []
+    searchFeedback.value = 'ค้นหาสถานที่ไม่สำเร็จ กรุณาตรวจการเชื่อมต่อแล้วลองใหม่'
+    searchFeedbackType.value = 'error'
+  } finally {
+    if (searchController === controller) {
+      searchController = null
+      isSearching.value = false
+    }
   }
 }
 
 function flyToResult(result) {
   searchResults.value = []
+  searchFeedback.value = ''
   searchQuery.value = result.display_name.split(',')[0]
-  if (map.value) {
-    const leafletMap = map.value.leafletObject
-    if (leafletMap) {
-      const zoom = result.type === 'country' ? 6 : result.type === 'administrative' ? 9 : 12
-      leafletMap.flyTo([parseFloat(result.lat), parseFloat(result.lon)], zoom, { duration: 1 })
-    }
-  }
+  const zoom = result.type === 'country' ? 6 : result.type === 'administrative' ? 9 : 12
+  moveMapTo(Number.parseFloat(result.lat), Number.parseFloat(result.lon), zoom, 0.9)
 }
 
 const mapOptions = {
   zoomControl: true,
-  scrollWheelZoom: false,
+  scrollWheelZoom: true,
+  wheelDebounceTime: 40,
+  wheelPxPerZoomLevel: 80,
+  keyboard: true,
+  keyboardPanDelta: 80,
   attributionControl: true,
 }
 
@@ -650,14 +923,7 @@ watch(() => props.focusFire, (newVal) => {
   if (newVal) {
     showFires.value = true
   }
-  if (newVal && map.value) {
-    const leafletMap = map.value.leafletObject
-    if (leafletMap) {
-      leafletMap.flyTo([newVal.lat, newVal.lng], 10, {
-        duration: 0.8,
-      })
-    }
-  }
+  if (newVal) moveMapTo(newVal.lat, newVal.lng, 10)
 })
 
 // Watch for focusStation changes, reveal its layer, and pan map
@@ -665,14 +931,33 @@ watch(() => props.focusStation, (newVal) => {
   if (newVal?.layer === 'aqi') showAqi.value = true
   else if (newVal) showWater.value = true
 
-  if (newVal && map.value) {
-    const leafletMap = map.value.leafletObject
-    if (leafletMap) {
-      leafletMap.flyTo([newVal.lat, newVal.lng], 10, {
-        duration: 0.8,
-      })
-    }
+  if (newVal) moveMapTo(newVal.lat, newVal.lng, 10)
+})
+
+onMounted(() => {
+  let hintSeen = false
+  try {
+    hintSeen = sessionStorage.getItem('map-interaction-hint-seen') === '1'
+  } catch {
+    // Session storage is optional; the hint can still be shown safely.
   }
+  showMapHint.value = !hintSeen
+  if (showMapHint.value) mapHintTimer = setTimeout(dismissMapHint, 7000)
+})
+
+onUnmounted(() => {
+  searchController?.abort()
+  if (feedbackTimer) clearTimeout(feedbackTimer)
+  if (mapHintTimer) clearTimeout(mapHintTimer)
+
+  const instance = getLeafletMap()
+  if (instance) {
+    instance.stopLocate()
+    instance.off('zoomend moveend', syncMapMetadata)
+    instance.off('locationfound', handleLocationFound)
+    instance.off('locationerror', handleLocationError)
+  }
+  leafletMap.value = null
 })
 
 // === Layer toggles ===
@@ -914,6 +1199,16 @@ function getRainIntensityLabel(intensity) {
   box-shadow: var(--shadow-card);
 }
 
+:deep(.user-location-marker) {
+  filter: drop-shadow(0 2px 5px rgba(37, 99, 235, 0.4));
+  animation: user-location-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes user-location-pulse {
+  0%, 100% { stroke-width: 3; filter: drop-shadow(0 2px 5px rgba(37, 99, 235, 0.35)); }
+  50% { stroke-width: 4; filter: drop-shadow(0 2px 9px rgba(37, 99, 235, 0.65)); }
+}
+
 /* Station pin markers */
 .station-pin {
   width: 32px;
@@ -1108,6 +1403,58 @@ function getRainIntensityLabel(intensity) {
   gap: 6px;
 }
 
+.map-utility-controls {
+  position: absolute;
+  top: 106px;
+  left: 12px;
+  z-index: 1001;
+  display: grid;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+}
+
+.map-utility-button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform var(--transition-normal), color var(--transition-fast), background var(--transition-fast);
+}
+
+.map-utility-button + .map-utility-button {
+  border-top: 1px solid var(--border-subtle);
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+}
+
+.map-utility-button:hover {
+  color: var(--accent);
+  background: var(--bg-card-hover);
+  transform: translateY(-1px);
+}
+
+.map-utility-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+  transform: none;
+}
+
+.map-utility-button .material-symbols-rounded {
+  font-size: 20px;
+}
+
 .map-control-btn {
   display: flex;
   align-items: center;
@@ -1155,7 +1502,8 @@ function getRainIntensityLabel(intensity) {
 }
 
 .map-control-btn:focus-visible,
-.map-search-clear:focus-visible,
+.map-utility-button:focus-visible,
+.map-search-action:focus-visible,
 .map-search-result-item:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.45);
   outline-offset: 2px;
@@ -1238,7 +1586,7 @@ function getRainIntensityLabel(intensity) {
 .map-overlay {
   position: absolute;
   left: .75rem;
-  bottom: .75rem;
+  bottom: 2.8rem;
   z-index: 900;
   min-width: 170px;
   padding: .7rem .8rem;
@@ -1268,6 +1616,84 @@ function getRainIntensityLabel(intensity) {
   border: 2px dashed rgba(249, 115, 22, 0.6);
   background: rgba(249, 115, 22, 0.1);
   flex-shrink: 0;
+}
+
+.map-message-stack {
+  position: absolute;
+  z-index: 1001;
+  left: 50%;
+  bottom: 12px;
+  width: min(440px, calc(100% - 200px));
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.map-feedback,
+.map-interaction-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.map-feedback.success {
+  color: var(--color-safe);
+  border-color: color-mix(in srgb, var(--color-safe) 34%, var(--border-subtle));
+}
+
+.map-feedback.error {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 34%, var(--border-subtle));
+}
+
+.map-feedback .material-symbols-rounded,
+.map-interaction-hint .material-symbols-rounded {
+  flex: 0 0 auto;
+  font-size: 17px;
+}
+
+.desktop-map-hint,
+.mobile-map-hint {
+  align-items: center;
+  gap: 7px;
+}
+
+.desktop-map-hint { display: inline-flex; }
+.mobile-map-hint { display: none; }
+
+.map-message-enter-active,
+.map-message-leave-active {
+  transition: opacity var(--transition-normal), transform var(--transition-normal);
+}
+
+.map-message-enter-from,
+.map-message-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+:deep(.leaflet-control-scale-line) {
+  border-color: color-mix(in srgb, var(--text-primary) 70%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg-secondary) 86%, transparent);
+  font-family: inherit;
+  font-size: 10px;
+  text-shadow: none;
 }
 
 /* Flow & Fire labels */
@@ -1385,13 +1811,19 @@ function getRainIntensityLabel(intensity) {
   gap: 8px;
   background: color-mix(in srgb, var(--bg-secondary) 94%, transparent);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
-  padding: 6px 12px;
+  border-radius: 12px;
+  padding: 3px 4px 3px 12px;
   box-shadow: var(--shadow-card);
   backdrop-filter: blur(12px);
-  max-width: 340px;
+  max-width: 400px;
   width: calc(100% - 94px);
-  min-height: 44px;
+  min-height: 52px;
+}
+
+.map-search-leading {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 19px;
 }
 
 .map-search-input {
@@ -1414,34 +1846,78 @@ function getRainIntensityLabel(intensity) {
   box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-card);
 }
 
-.map-search-clear {
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: var(--text-muted);
-  width: 32px;
-  height: 32px;
+.map-search-action {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
   padding: 0;
-  align-items: center;
-  justify-content: center;
-  display: flex;
-  font-size: 16px;
-  line-height: 1;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: color var(--transition-fast), background var(--transition-fast), opacity var(--transition-fast);
 }
 
-.map-search-results {
+.map-search-action:hover {
+  color: var(--accent);
+  background: var(--bg-card-hover);
+}
+
+.map-search-action:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.map-search-action .material-symbols-rounded {
+  font-size: 19px;
+}
+
+.map-search-submit {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.map-search-results,
+.map-search-feedback {
   position: absolute;
-  top: 64px;
+  top: 72px;
   left: 82px;
   z-index: 1002;
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle);
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: var(--shadow-elevated);
-  max-width: 340px;
+  max-width: 400px;
   width: calc(100% - 94px);
+}
+
+.map-search-results {
   max-height: 240px;
   overflow-y: auto;
+}
+
+.map-search-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 11px 12px;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.map-search-feedback.error {
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 32%, var(--border-subtle));
+}
+
+.map-search-feedback .material-symbols-rounded {
+  flex: 0 0 auto;
+  font-size: 18px;
 }
 
 .map-search-result-item {
@@ -1449,14 +1925,16 @@ function getRainIntensityLabel(intensity) {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 10px 12px;
+  min-height: 44px;
+  padding: 11px 12px;
   cursor: pointer;
   font-size: 0.78rem;
   color: var(--text-primary);
   background: var(--bg-secondary);
   border: 0;
   border-bottom: 1px solid var(--border-subtle);
-  transition: background 0.15s;
+  text-align: left;
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
 .map-search-result-item:last-child {
@@ -1531,14 +2009,20 @@ function getRainIntensityLabel(intensity) {
 }
 
 @media (max-width: 700px) {
-  .map-search-bar { left: 8px; right: 8px; top: 8px; max-width: none; width: auto; min-height: 44px; }
-  .map-search-results { left: 8px; right: 8px; top: 60px; max-width: none; width: auto; }
+  .map-search-bar { left: 8px; right: 8px; top: 8px; max-width: none; width: auto; min-height: 52px; }
+  .map-search-results, .map-search-feedback { left: 8px; right: 8px; top: 68px; max-width: none; width: auto; }
+  .map-utility-controls { top: 164px; right: 8px; left: auto; }
   .map-controls { top: auto; left: 8px; right: 8px; bottom: 8px; flex-direction: row; gap: 8px; overflow-x: auto; padding: 0 0 6px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
   .map-controls::-webkit-scrollbar { height: 4px; }.map-controls::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--border); }
   .map-control-btn { flex: 0 0 auto; min-height: 44px; background: color-mix(in srgb, var(--bg-secondary) 96%, transparent); }
+  .map-message-stack { bottom: 70px; width: calc(100% - 16px); }
+  .map-feedback, .map-interaction-hint { border-radius: 12px; }
+  .desktop-map-hint { display: none; }
+  .mobile-map-hint { display: inline-flex; }
   .map-overlay { display: none; }
   .flow-direction-label, .fire-alert-label { display: none; }
-  :deep(.leaflet-top.leaflet-left) { top: 56px; right: 8px; left: auto; }
+  :deep(.leaflet-top.leaflet-left) { top: 60px; right: 8px; left: auto; }
+  :deep(.leaflet-bottom.leaflet-left) { bottom: 60px; left: 8px; }
   :deep(.leaflet-left .leaflet-control) { margin-left: 0; }
 }
 
@@ -1559,7 +2043,12 @@ function getRainIntensityLabel(intensity) {
   .custom-marker-pulse,
   .report-pulse,
   .flow-direction-label,
-  .fire-alert-label { animation: none !important; }
+  .fire-alert-label,
+  :deep(.user-location-marker) { animation: none !important; }
+  .map-message-enter-active,
+  .map-message-leave-active,
+  .map-utility-button,
+  .map-search-action { transition: none !important; }
 }
 </style>
 
