@@ -5,7 +5,7 @@
         <span class="material-symbols-rounded" aria-hidden="true">model_training</span>
       </div>
       <div>
-        <h3 id="water-forecast-title" class="card-title">แนวโน้มระดับน้ำ 6 ชั่วโมง</h3>
+        <h3 id="water-forecast-title" class="card-title">แนวโน้มระดับน้ำ 12 ชั่วโมง</h3>
         <p class="card-subtitle">{{ station?.name || 'เลือกสถานีเพื่อดูพยากรณ์' }}</p>
       </div>
     </div>
