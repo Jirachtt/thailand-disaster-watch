@@ -590,9 +590,9 @@
           class="map-control-btn layer-toggle rain-dir-btn"
           :class="{ active: showRainDirection }"
           :aria-pressed="showRainDirection"
-          :aria-label="`${showRainDirection ? 'ซ่อน' : 'แสดง'}พยากรณ์ทิศทางฝน`"
+          :aria-label="`${showRainDirection ? 'ซ่อน' : 'แสดง'}เส้นทางตามลม (ทดลอง)`"
           @click="toggleRainDirection"
-          title="พยากรณ์ทิศทางฝน 1-3 ชม."
+          title="เส้นทางสมมติตามลม ไม่ใช่พยากรณ์เวลาฝนมาถึง"
         >
           <span class="material-symbols-rounded">storm</span>
           <span class="control-label">พยากรณ์ฝน</span>
@@ -640,7 +640,7 @@
           </div>
           <div v-if="showRainDirection" class="legend-item">
             <span style="font-size: 10px; flex-shrink: 0; color: #3b82f6;">➜ ┈</span>
-            <span>พยากรณ์ทิศทางฝน (1-3 ชม.)</span>
+            <span>เส้นทางตามลม (ทดลอง)</span>
           </div>
         </div>
         <div v-if="showReports && reports.length > 0" class="legend-group">
