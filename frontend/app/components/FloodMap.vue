@@ -190,8 +190,8 @@
                   <div class="popup-content">
                     <div class="popup-name" style="color: #ff4500">ทิศ {{ cell.direction }}</div>
                     <div class="popup-stat">
-                      <span class="popup-stat-label">โอกาสลุกลาม</span>
-                      <span class="popup-stat-value" style="color: #f97316">{{ (cell.probability * 100).toFixed(0) }}%</span>
+                      <span class="popup-stat-label">น้ำหนักแบบจำลองทดลอง (ไม่ใช่โอกาสเกิดจริง)</span>
+                      <span class="popup-stat-value" style="color: #f97316">{{ cell.probability.toFixed(2) }} / 1</span>
                     </div>
                     <div class="popup-stat">
                       <span class="popup-stat-label">ระยะทาง</span>
@@ -330,7 +330,7 @@
                     </span>
                   </div>
                   <div class="popup-stat" v-if="rain.rainDirection">
-                    <span class="popup-stat-label">ทิศทางฝน</span>
+                    <span class="popup-stat-label">ทิศลมประกอบการดูฝน</span>
                     <span class="popup-stat-value" style="color: #2563eb">
                       → {{ rain.rainDirection }} ({{ rain.windSpeed?.toFixed(1) }} กม./ชม.)
                     </span>
@@ -369,10 +369,10 @@
                   </LIcon>
                   <LPopup :options="{ closeButton: true, className: 'dark-popup' }">
                     <div class="popup-content">
-                      <div class="popup-name" style="color: #2563eb">พยากรณ์ {{ rain.name }}</div>
+                      <div class="popup-name" style="color: #2563eb">แนวลมสมมติ {{ rain.name }}</div>
                       <div class="popup-type">ทิศทาง {{ rain.rainDirection }} • ลม {{ rain.windSpeed?.toFixed(1) }} กม./ชม.</div>
                       <div class="popup-stat">
-                        <span class="popup-stat-label">คาดว่าฝนจะเคลื่อนมาถึง</span>
+                        <span class="popup-stat-label">ระยะเคลื่อนที่ถ้าลมคงเดิม ไม่ใช่เวลาฝนมาถึง</span>
                         <span class="popup-stat-value" style="color: #2563eb">
                           อีก {{ point.hours || pi + 1 }} ชั่วโมง
                         </span>

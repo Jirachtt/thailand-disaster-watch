@@ -5,7 +5,7 @@
         <span class="material-symbols-rounded" aria-hidden="true">local_fire_department</span>
       </div>
       <div>
-        <div class="card-title fire-panel-title">คาดการณ์การลุกลามของไฟ</div>
+        <div class="card-title fire-panel-title">จุดความร้อนและแบบจำลองลมเชิงทดลอง</div>
         <div class="fire-panel-summary">{{ fireSummaryText }}</div>
       </div>
     </div>
@@ -46,7 +46,7 @@
     </div>
     <div v-else-if="displayFires.length === 0" class="fire-empty" role="status">
       <span class="material-symbols-rounded fire-state-icon muted" aria-hidden="true">local_fire_department</span>
-      <p>ไม่พบจุดความร้อนในข้อมูลล่าสุด</p>
+      <p>ไม่พบการตรวจจับในข้อมูล VIIRS SNPP ชุดนี้ ไม่ได้ยืนยันว่าไม่มีไฟในพื้นที่</p>
     </div>
     <div v-else-if="!popupFire" class="fire-hint">
       <span class="material-symbols-rounded fire-hint-icon" aria-hidden="true">touch_app</span>
@@ -88,7 +88,7 @@
                 </span>
                 <span class="fire-status-badge">
                   <span class="material-symbols-rounded" aria-hidden="true">{{ popupFire.status === 'active' ? 'radio_button_checked' : 'check_circle' }}</span>
-                  {{ popupFire.status === 'active' ? 'กำลังติดตาม' : 'ควบคุมได้แล้ว' }}
+                  ตรวจพบโดยดาวเทียม ยังไม่ยืนยันสถานการณ์ภาคพื้น
                 </span>
               </div>
 
@@ -142,7 +142,7 @@
                   <span class="material-symbols-rounded fire-accent-icon" aria-hidden="true">timeline</span>
                   คาดการณ์การลุกลาม
                 </div>
-                <p class="spread-model-note">พื้นที่และคะแนนเป็นผลคำนวณของแบบจำลอง ไม่ใช่ค่าที่ NASA FIRMS ยืนยัน</p>
+                <p class="spread-model-note">พื้นที่พิกเซลและการลามเป็นตัวอย่างแบบจำลอง ยังไม่เทียบกับพื้นที่เผาไหม้จริง NASA ไม่แนะนำใช้จุดความร้อนประมาณพื้นที่เผาไหม้ ไม่มีเปอร์เซ็นต์ความแม่นยำที่ยืนยันแล้ว</p>
                 <div class="spread-timeline-grid">
                   <div
                     v-for="pred in popupPredictions"
@@ -154,10 +154,7 @@
                     <div class="spread-step-area">{{ pred.estimatedAreaSqKm }} ตร.กม.</div>
                     <div class="spread-step-radius">รัศมี {{ pred.estimatedRadiusKm }} กม.</div>
                     <div class="spread-step-confidence">
-                      <div class="confidence-bar">
-                        <div class="confidence-fill" :style="{ width: pred.confidence + '%' }"></div>
-                      </div>
-                      <span class="confidence-text">คะแนนแบบจำลอง {{ pred.confidence }}%</span>
+                      <span class="confidence-text">แบบจำลองทดลอง ยังไม่สอบเทียบกับเหตุการณ์จริง</span>
                     </div>
                   </div>
                 </div>

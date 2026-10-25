@@ -24,8 +24,8 @@
         <span class="prediction-value">{{ !hasForecast ? 'ยังคำนวณไม่ได้' : peakHours > 0 ? `ประมาณ ${peakHours} ชม.` : 'ทรงตัว/ลดลง' }}</span>
       </div>
       <div class="prediction-row">
-        <span class="prediction-label">ความเชื่อมั่นของแบบจำลอง</span>
-        <span class="prediction-value forecast-confidence">{{ confidence === null ? '—' : `${confidence}%` }}</span>
+        <span class="prediction-label">การประเมินแบบจำลอง</span>
+        <span class="prediction-value forecast-confidence">ยังไม่ยืนยันความแม่นยำ</span>
       </div>
       <div class="prediction-row">
         <span class="prediction-label">สถานการณ์จาก ThaiWater</span>
@@ -37,7 +37,7 @@
       </div>
       <p class="model-note">
         <span class="material-symbols-rounded" aria-hidden="true">info</span>
-        คำนวณจากระดับน้ำและแนวโน้มล่าสุดของ ThaiWater เป็นค่าประเมินเชิงทดลอง ไม่ใช่ค่าพยากรณ์จากหน่วยงานหรือคำสั่งอพยพ
+        คำนวณแนวโน้มจากประวัติตรวจวัด ThaiWater ที่โหลดได้ ดูค่าคลาดเคลื่อนย้อนหลังใต้กราฟ ไม่มีเปอร์เซ็นต์ความแม่นยำที่ยืนยันแล้ว และไม่ใช่คำสั่งอพยพ
       </p>
     </div>
     <div v-else class="module-empty compact">

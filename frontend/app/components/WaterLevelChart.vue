@@ -56,17 +56,23 @@
         <span><i class="legend-block rain"></i> {{ rainfallLegendLabel }}</span>
         <span>{{ historyFootnote }}</span>
       </div>
+      <p class="history-source" v-if="backtestSix?.samples">
+        ทดสอบย้อนหลังสถานีนี้ที่ระยะ 6 ชม. จำนวน {{ backtestSix.samples }} คู่:
+        คลาดเคลื่อนเฉลี่ยสัมบูรณ์ (MAE) {{ backtestSix.maeMeters.toFixed(3) }} ม.
+        เทียบกับการสมมติว่าระดับคงเดิม {{ backtestSix.baselineMaeMeters.toFixed(3) }} ม.
+        เป็นการทดสอบแบบเลื่อนจุดเวลาในประวัติชุดนี้ ไม่ใช่ผลยืนยันสำหรับทุกสถานีหรือเหตุการณ์ในอนาคต
+      </p>
       <details class="forecast-table-details">
         <summary>ดูข้อมูลกราฟแบบตาราง</summary>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>เวลา</th><th>ประเภท</th><th>ระดับน้ำ</th><th>ความเชื่อมั่น</th></tr></thead>
+            <thead><tr><th>เวลา</th><th>ประเภท</th><th>ระดับน้ำ</th><th>สถานะการตรวจ</th></tr></thead>
             <tbody>
               <tr v-for="row in accessibleRows" :key="`${row.type}-${row.timestamp}`">
                 <td>{{ formatDateTime(row.timestamp) }}</td>
                 <td>{{ row.type }}</td>
                 <td>{{ row.level.toFixed(2) }} ม.</td>
-                <td>{{ row.confidence ? `${row.confidence}%` : '—' }}</td>
+                <td>{{ row.type === 'ค่าคาดการณ์' ? 'แบบจำลองทดลอง' : 'จาก API ตรวจวัด' }}</td>
               </tr>
             </tbody>
           </table>
@@ -85,6 +91,7 @@ const props = defineProps({
   stationId: { type: String, default: '' },
   stationName: { type: String, default: 'สถานีตรวจวัด' },
 })
+const emit = defineEmits(['forecast'])
 
 const activeTab = ref('24h')
 const chartCanvas = ref(null)
@@ -120,6 +127,10 @@ const isUnavailable = computed(() => Boolean(error.value)
   || tsData.value?.rainfallSourceStatus === 'fallback')
 const hasChartData = computed(() => !isUnavailable.value && Boolean(tsData.value?.waterLevel?.length))
 const isEstimatedHistory = computed(() => !isUnavailable.value && Boolean(tsData.value?.estimatedHistory))
+const backtestSix = computed(() => tsData.value?.forecastValidation?.backtest?.horizons?.find(row => row.hours === 6))
+watch(tsData, value => {
+  emit('forecast', { stationId: props.stationId, ...(value?.forecastSummary || {}) })
+}, { immediate: true })
 
 const historyBadge = computed(() => {
   if (isUnavailable.value) {
@@ -149,13 +160,13 @@ const historyLegendLabel = computed(() => isEstimatedHistory.value ? 'ค่า�
 const rainfallLegendLabel = computed(() => {
   if (['error', 'fallback'].includes(tsData.value?.rainfallSourceStatus)) return 'ไม่มีข้อมูลฝนจาก API'
   if (tsData.value?.rainfallSourceStatus === 'stale') return 'ฝนจากข้อมูล API ล่าสุดที่บันทึกไว้'
-  return 'ฝนเฉลี่ยจากยอดสะสม 24 ชม.'
+  return 'ไม่มีประวัติฝนรายชั่วโมงในชุดนี้'
 })
 
 const historyFootnote = computed(() => {
   if (isUnavailable.value) return 'ไม่แสดงข้อมูล เนื่องจากเชื่อมต่อแหล่งข้อมูลไม่ได้'
   if (isEstimatedHistory.value) return 'เส้นย้อนหลังคำนวณจากค่าล่าสุดและแนวโน้ม ไม่ใช่ค่าตรวจวัดรายชั่วโมง'
-  return 'ความเชื่อมั่นของค่าคาดการณ์ลดลงตามระยะเวลา'
+  return 'แนวโน้มทดลองจากประวัติจริง ไม่แสดงเปอร์เซ็นต์ความเชื่อมั่นที่ยังไม่ผ่านการตรวจ'
 })
 
 function getFilteredData(hours) {
@@ -194,7 +205,7 @@ const chartSummary = computed(() => {
   const latest = values.at(-1)?.level
   const prediction = tsData.value.predictions?.at(-1)?.predictedLevel
   const historyDescription = isEstimatedHistory.value ? 'ชุดข้อมูลย้อนหลังเป็นค่าประเมิน' : 'ชุดข้อมูลย้อนหลังเป็นค่าตรวจวัด'
-  return `ระดับน้ำล่าสุด ${Number(latest).toFixed(2)} เมตร ${historyDescription} และคาดการณ์ใน 12 ชั่วโมง ${Number(prediction).toFixed(2)} เมตร`
+  return `ระดับน้ำล่าสุด ${Number(latest).toFixed(2)} เมตร ${historyDescription}${Number.isFinite(Number(prediction)) && prediction != null ? ` และแนวโน้มใน 12 ชั่วโมง ${Number(prediction).toFixed(2)} เมตร` : ' ยังมีข้อมูลไม่พอหรือเก่าเกินไปสำหรับคำนวณแนวโน้ม'}`
 })
 
 function buildChart() {

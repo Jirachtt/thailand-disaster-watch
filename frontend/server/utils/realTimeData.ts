@@ -2,6 +2,7 @@
 
 import { predictFireSpread, predictRainDirection, degToCompass } from './fireSpreadModel'
 import { isPointInThailand } from './thailandGeofence'
+import { normalizeHistory, predictWaterTrend, backtestWaterTrend, thaiTimestamp } from './waterForecast.js'
 
 // ============================================
 // OpenWeatherMap — Wind/Weather Data
@@ -259,7 +260,7 @@ function generateFireSpreadPrediction(fire: any) {
         currentArea += spreadRate * (h - prevH)
 
         const radiusKm = Math.sqrt(Math.max(0.01, currentArea) / Math.PI)
-        const confidence = Math.max(40, 95 - h * 4.5)
+        const confidence = null // No calibration data supports a probability
 
         predictions.push({
             hoursFromNow: h,
@@ -268,7 +269,8 @@ function generateFireSpreadPrediction(fire: any) {
             spreadRate: Math.round(spreadRate * 100) / 100,
             spreadDirectionDeg: windDirectionDeg,
             spreadDirection: fire.windDirection || 'N/A',
-            confidence: Math.round(confidence * 10) / 10,
+            confidence,
+            validationStatus: 'unvalidated-heuristic',
         })
     }
     return predictions
@@ -444,6 +446,8 @@ async function fetchRealFireDataInternal() {
             source: 'NASA FIRMS (VIIRS SNPP)',
             dataDelay: 'Near Real-Time (NRT) — ข้อมูลจากดาวเทียม ล่าช้าประมาณ 2–3 ชั่วโมง',
             dataRange: 'ย้อนหลัง 24 ชั่วโมง',
+            coverage: 'VIIRS SNPP เท่านั้น การไม่พบการตรวจจับไม่ได้ยืนยันว่าไม่มีไฟ',
+            forecastValidation: 'ยังไม่มีผลเทียบการลามกับเหตุการณ์จริง',
             status: 'live',
             isFallback: false,
             activeCount,
@@ -556,7 +560,10 @@ async function fetchRealRainDataInternal() {
         const result = {
             timestamp: new Date().toISOString(),
             source: 'ThaiWater API (HII)',
-            dataDelay: 'Real-time — ข้อมูลสดจากสถานีวัดฝนทั่วประเทศ',
+            dataDelay: 'ฝนสะสมย้อนหลัง 24 ชั่วโมง ไม่ใช่พยากรณ์ปริมาณฝน',
+            totalAvailableStations: Array.isArray(allStations) ? allStations.length : 0,
+            displayedStationLimit: 30,
+            selection: 'สูงสุด 30 สถานีที่มีฝนสะสมอย่างน้อย 10 มม.',
             status: 'live',
             isFallback: false,
             totalStations: rainStations.length,
@@ -589,7 +596,8 @@ function getWaterSituation(level: number) {
         case 2: return { riskLevel: 'warning', riskType: 'drought', situationLabel: 'น้ำน้อย', priority: 2 }
         case 4: return { riskLevel: 'warning', riskType: 'flood', situationLabel: 'น้ำมาก', priority: 4 }
         case 5: return { riskLevel: 'danger', riskType: 'flood', situationLabel: 'ล้นตลิ่ง', priority: 5 }
-        default: return { riskLevel: 'safe', riskType: 'normal', situationLabel: 'ปกติ', priority: 1 }
+        case 3: return { riskLevel: 'safe', riskType: 'normal', situationLabel: 'ปกติ', priority: 1 }
+        default: return { riskLevel: 'unknown', riskType: 'unknown', situationLabel: 'ไม่ทราบสถานการณ์', priority: 0 }
     }
 }
 
@@ -633,8 +641,8 @@ async function fetchRealWaterDataInternal() {
                 return Number.isFinite(lat) && Number.isFinite(lng) && Number.isFinite(level)
             })
             .sort((a: any, b: any) => {
-                const aPriority = getWaterSituation(Number(a.situation_level) || 3).priority
-                const bPriority = getWaterSituation(Number(b.situation_level) || 3).priority
+                const aPriority = getWaterSituation(Number(a.situation_level)).priority
+                const bPriority = getWaterSituation(Number(b.situation_level)).priority
                 return bPriority - aPriority
             })
 
@@ -659,17 +667,15 @@ async function fetchRealWaterDataInternal() {
             // Determine type based on position (upstream/midstream/downstream by latitude)
             const lat = Number.parseFloat(station.tele_station_lat)
             const lng = Number.parseFloat(station.tele_station_long)
-            let type = 'midstream'
-            let typeLabel = 'กลางน้ำ'
-            if (lat > 18.9) { type = 'upstream'; typeLabel = 'ต้นน้ำ' }
-            else if (lat < 18.7) { type = 'downstream'; typeLabel = 'ปลายน้ำ' }
+            const type = 'unknown'
+            const typeLabel = 'ไม่ระบุลำดับลุ่มน้ำ'
 
-            const situationLevel = Number(s.situation_level) || 3
+            const situationLevel = Number(s.situation_level)
             const situation = getWaterSituation(situationLevel)
             const parsedBank = parseFloat(station.min_bank)
             const minBank = Number.isFinite(parsedBank) ? parsedBank : null
 
-            const flowTimeToDownstream = type === 'upstream' ? 6 : type === 'midstream' ? 3 : 0
+            const flowTimeToDownstream = null // requires verified river routing and travel-time data
 
             return {
                 id: station.id ? `TW-${station.id}` : `TW-${station.tele_station_oldcode || idx + 1}`,
@@ -681,9 +687,7 @@ async function fetchRealWaterDataInternal() {
                 lng,
                 elevation: null,
                 description: `${geocode.amphoe_name?.th || ''} ${geocode.province_name?.th || ''}`.trim() || 'ไม่ระบุพื้นที่',
-                thresholds: minBank
-                    ? { warning: minBank * 0.8, critical: minBank * 0.95 }
-                    : { warning: null, critical: null },
+                thresholds: { warning: null, critical: minBank }, // MSL is not a percentage-of-depth scale
                 currentLevel,
                 situationLevel,
                 situationLabel: situation.situationLabel,
@@ -695,9 +699,10 @@ async function fetchRealWaterDataInternal() {
                 },
                 riskLevel: situation.riskLevel,
                 riskType: situation.riskType,
-                peakPredicted: trend === null ? null : currentLevel + (trend > 0 ? trend * 6 : 0),
-                peakInHours: trend === null ? null : trend > 0 ? 6 : 0,
-                forecastConfidence: trend === null ? null : Math.max(65, 92 - Math.abs(trend) * 20),
+                peakPredicted: null,
+                peakInHours: null,
+                forecastConfidence: null,
+                forecastValidation: 'not-calibrated',
                 flowTimeToDownstream,
                 source: 'ThaiWater API',
                 teleStationId: station.id || '',
@@ -726,7 +731,10 @@ async function fetchRealWaterDataInternal() {
         const result = {
             timestamp: new Date().toISOString(),
             source: 'ThaiWater API (HII/RID)',
-            dataDelay: 'Real-time — ข้อมูลสดจากเซ็นเซอร์วัดระดับน้ำทั่วประเทศ',
+            dataDelay: 'เชื่อมต่อ ThaiWater แล้ว โปรดตรวจเวลาตรวจวัดของแต่ละสถานี',
+            totalAvailableStations: sortedStations.length,
+            displayedStationLimit: 50,
+            selection: 'สถานีสำคัญเรียงตามสถานการณ์จากชุดที่ API ส่งมา',
             status: 'live',
             isFallback: false,
             overallRisk,
@@ -752,172 +760,48 @@ export async function fetchRealWaterData() {
 const THAIWATER_GRAPH_URL = 'https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_graph'
 
 export async function fetchStationTimeseries(stationId: string) {
-    const timeseriesCacheKey = `timeseries:${stationId}`
-    const cached = getCached<any>(timeseriesCacheKey)
+    const cacheKey = 'timeseries:' + stationId
+    const cached = getCached<any>(cacheKey)
     if (cached) return cached
-
-    // Get cached water data to find the station info
     const waterData = await fetchRealWaterData()
     const station = waterData.stations?.find((s: any) => s.id === stationId)
-
-    if (!station) {
-        return {
-            waterLevel: [],
-            rainfall: [],
-            predictions: [],
-            source: 'station-not-found',
-            status: 'error',
-            estimatedHistory: false,
-        }
-    }
-
+    if (!station) return { stationId, waterLevel: [], rainfall: [], predictions: [], status: 'error', source: 'station-not-found', estimatedHistory: false }
     const now = Date.now()
-    const waterLevel: any[] = []
-    const rainfall: any[] = []
-    const predictions: any[] = []
-    let estimatedHistory = false
-
-    // Try to fetch real historical water level from ThaiWater graph API
+    let rows: any[] = []
     if (station.teleStationId) {
         try {
-            const endDate = new Date().toISOString().slice(0, 10)
-            const startDate = new Date(now - 72 * 3600000).toISOString().slice(0, 10)
-            const graphUrl = `${THAIWATER_GRAPH_URL}?station_type=tele_waterlevel&station_id=${station.teleStationId}&start_date=${startDate}&end_date=${endDate}`
-
-            const response: any = await $fetch(graphUrl, { timeout: 8000, retry: 0 })
-            const graphData = response?.data?.graph_data
-                || response?.waterlevel_data?.data
-                || (Array.isArray(response?.data) ? response.data : [])
-
-            if (Array.isArray(graphData) && graphData.length > 0) {
-                const hourlyPoints = new Map<string, any>()
-                for (const point of graphData) {
-                    const rawDatetime = point.datetime || point.waterlevel_datetime
-                    const normalizedDatetime = typeof rawDatetime === 'string' && !/[zZ]|[+-]\d\d:\d\d$/.test(rawDatetime)
-                        ? `${rawDatetime.replace(' ', 'T')}+07:00`
-                        : rawDatetime
-                    const ts = new Date(normalizedDatetime).getTime()
-                    const parsedLevel = parseFloat(point.value ?? point.waterlevel_msl)
-                    if (!isNaN(ts) && Number.isFinite(parsedLevel)) {
-                        const hourKey = new Date(ts).toISOString().slice(0, 13)
-                        hourlyPoints.set(hourKey, {
-                            timestamp: ts,
-                            datetime: new Date(ts).toISOString(),
-                            level: parsedLevel,
-                        })
-                    }
-                }
-                waterLevel.push(...hourlyPoints.values())
-                waterLevel.sort((a, b) => a.timestamp - b.timestamp)
-                console.log(`[ThaiWater Graph] Fetched ${waterLevel.length} data points for station ${stationId}`)
-            }
-        } catch (e: any) {
-            console.log(`[ThaiWater Graph] Could not fetch history for ${stationId}: ${e.message}`)
-        }
+            const end = new Date(now).toISOString().slice(0, 10)
+            const start = new Date(now - 72 * 3600000).toISOString().slice(0, 10)
+            const url = THAIWATER_GRAPH_URL + '?station_type=tele_waterlevel&station_id=' + encodeURIComponent(station.teleStationId) + '&start_date=' + start + '&end_date=' + end
+            const response: any = await $fetch(url, { timeout: 8000, retry: 0 })
+            const data = response?.data?.graph_data || response?.waterlevel_data?.data || (Array.isArray(response?.data) ? response.data : [])
+            if (Array.isArray(data)) rows = data
+        } catch { /* Missing history stays missing; never reconstruct it from a single snapshot. */ }
     }
-
-    // If the graph endpoint has no history, expose an explicitly marked model
-    // derived from the real current ThaiWater snapshot.
-    if (waterLevel.length === 0) {
-        estimatedHistory = true
-        const currentLevel = Number(station.currentLevel)
-        const trend = station.trend == null ? Number.NaN : Number(station.trend)
-        if (Number.isFinite(currentLevel) && Number.isFinite(trend)) {
-            // Build 72h history from current level + real API trend.
-            for (let h = 72; h >= 0; h--) {
-                const ts = now - h * 3600000
-                const estimatedLevel = currentLevel - (trend * h / 6)
-                waterLevel.push({
-                    timestamp: ts,
-                    datetime: new Date(ts).toISOString(),
-                    level: Math.max(0, Math.round(estimatedLevel * 100) / 100),
-                })
-            }
-            console.log(`[ThaiWater] Using trend-extrapolated data for station ${stationId}`)
-        }
-    }
-
-    // Get real rain data for nearest station
-    const rainData = await fetchRealRainData()
-    const rainStations = rainData?.rainStations || []
-
-    // Find nearest rain station by distance
-    let nearestRain: any = null
-    let minDist = Infinity
-    for (const rs of rainStations) {
-        const dist = Math.sqrt(Math.pow(rs.lat - station.lat, 2) + Math.pow(rs.lng - station.lng, 2))
-        if (dist < minDist) {
-            minDist = dist
-            nearestRain = rs
-        }
-    }
-
-    // Build rainfall timeline from real data
-    const rain24h = Number(nearestRain?.rain24h)
-    const parsedRain1h = nearestRain?.rain1h == null ? Number.NaN : Number(nearestRain.rain1h)
-    const rain1h = Number.isFinite(parsedRain1h) ? parsedRain1h : null
-    if (nearestRain && Number.isFinite(rain24h)) {
-        for (let h = 72; h >= 0; h--) {
-            const ts = now - h * 3600000
-            // Distribute the real 24-hour accumulation as an explicitly
-            // estimated timeline, weighted toward the real latest-hour value.
-            let amount = 0
-            if (h <= 24 && rain24h > 0) {
-                amount = (rain24h / 24) * (h <= 1 ? (rain1h ?? rain24h / 24) : 1)
-            }
-            rainfall.push({
-                timestamp: ts,
-                datetime: new Date(ts).toISOString(),
-                amount: Math.round(amount * 10) / 10,
-                accumulated: h <= 24 ? Math.round(rain24h * (24 - h) / 24 * 10) / 10 : 0,
-            })
-        }
-    }
-
-    // Trend model with decay and a small rain contribution. This is a
-    // deterministic short-horizon estimate, not a random "AI" value.
-    const currentLevel = Number(station.currentLevel)
-    const trend = station.trend == null ? Number.NaN : Number(station.trend)
-    if (Number.isFinite(currentLevel) && Number.isFinite(trend)) {
-        let level = currentLevel
-        for (let h = 1; h <= 12; h++) {
-            const trendContribution = (trend / 6) * Math.exp(-h / 10)
-            const rainContribution = Number.isFinite(rain24h)
-                ? Math.min(0.025, rain24h / 4000) * Math.exp(-h / 8)
-                : 0
-            level += trendContribution + rainContribution
-            level = Math.max(0, level)
-            predictions.push({
-                timestamp: now + h * 3600000,
-                datetime: new Date(now + h * 3600000).toISOString(),
-                predictedLevel: Math.round(level * 100) / 100,
-                confidence: Math.round((95 - h * 3) * 10) / 10,
-            })
-        }
-    }
-
+    const waterLevel = normalizeHistory(rows, now)
+    const predictions = predictWaterTrend(waterLevel, now)
+    const backtest = backtestWaterTrend(waterLevel, now)
+    const current = Number(station.currentLevel)
+    const six = predictions.filter((p: any) => p.timestamp <= now + 6 * 3600000)
+    const peak = six.length ? Math.max(current, ...six.map((p: any) => p.predictedLevel)) : null
+    const peakPoint = six.find((p: any) => p.predictedLevel === peak)
+    const observationTime = thaiTimestamp(station.lastUpdate)
     const result = {
-        waterLevel,
-        rainfall,
-        predictions,
-        source: estimatedHistory
-            ? 'ThaiWater API — ประเมินย้อนหลังจากค่าปัจจุบันและแนวโน้ม'
-            : 'ThaiWater API (waterlevel_graph)',
-        status: waterLevel.length || predictions.length ? (estimatedHistory ? 'estimated' : 'live') : 'error',
-        estimatedHistory,
-        // ThaiWater exposes a rain snapshot/accumulation here, not an hourly
-        // history. The chart bars are therefore an explicit estimate.
-        estimatedRainfallTimeline: true,
-        rainfallSourceStatus: rainData?.status || 'error',
-        isFallback: false,
-        stationName: station.name,
-        nearestRainStation: nearestRain?.name || null,
-        forecastMethod: 'deterministic-trend-and-rain-model',
-        forecastInputs: {
-            water: 'ThaiWater current level and trend',
-            rainfall: nearestRain ? `ThaiWater station: ${nearestRain.name}` : null,
+        stationId, stationName: station.name, waterLevel, rainfall: [], predictions,
+        source: 'ThaiWater API (waterlevel_graph)',
+        status: waterLevel.length ? (now - waterLevel.at(-1)!.timestamp > 2 * 3600000 ? 'stale' : 'live') : 'error',
+        estimatedHistory: false, estimatedRainfallTimeline: false, rainfallSourceStatus: 'not-provided',
+        isFallback: false, forecastMethod: 'experimental-damped-six-hour-measured-trend',
+        forecastValidation: { status: 'experimental', accuracyPercent: null, backtest },
+        forecastSummary: {
+            peakPredicted: peak,
+            peakInHours: peak === null ? null : peakPoint ? Math.max(1, Math.round((peakPoint.timestamp - now) / 3600000)) : 0,
+            forecastPeak12: predictions.length ? Math.max(current, ...predictions.map((p: any) => p.predictedLevel)) : null,
+            forecastConfidence: null,
         },
+        observationTime: Number.isFinite(observationTime) ? new Date(observationTime).toISOString() : null,
+        note: 'แสดงเฉพาะประวัติตรวจวัดจริง ไม่สร้างกราฟฝนรายชั่วโมงจากยอดสะสม ค่าแนวโน้มทดลองไม่มีเปอร์เซ็นต์ความแม่นยำ',
     }
-    setCache(timeseriesCacheKey, result)
+    setCache(cacheKey, result)
     return result
 }
