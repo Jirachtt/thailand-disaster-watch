@@ -47,7 +47,7 @@
           <strong v-if="dashboardStations.length">{{ waterAlertCount }} <small>สถานีเฝ้าระวัง</small></strong>
           <span v-else-if="pendingDashboard" class="skeleton-line short"></span>
           <strong v-else>— <small>ยังไม่มีข้อมูล</small></strong>
-          <span class="overview-meta">ทั้งหมด {{ dashboardStations.length }} สถานี · {{ statusShortLabel(waterStatus) }}</span>
+          <span class="overview-meta">แสดง {{ dashboardStations.length }} จาก {{ dashboard?.totalAvailableStations || '—' }} สถานี · {{ statusShortLabel(waterStatus) }}</span>
         </span>
         <span class="overview-arrow material-symbols-rounded" aria-hidden="true">arrow_forward</span>
       </button>
@@ -59,7 +59,7 @@
           <strong v-if="fireDashboard && isUsableStatus(fireStatus)">{{ activeFireCount }} <small>กลุ่มในไทย</small></strong>
           <span v-else-if="pendingFire" class="skeleton-line short"></span>
           <strong v-else>— <small>ยังไม่มีข้อมูล</small></strong>
-          <span class="overview-meta">ย้อนหลัง 24 ชม. · {{ statusShortLabel(fireStatus) }}</span>
+          <span class="overview-meta">VIIRS SNPP · 24 ชม. · {{ statusShortLabel(fireStatus) }}</span>
         </span>
         <span class="overview-arrow material-symbols-rounded" aria-hidden="true">arrow_forward</span>
       </button>
@@ -154,7 +154,7 @@
           <div class="module-header compact-header">
             <div class="module-heading">
               <span class="module-icon water"><span class="material-symbols-rounded" aria-hidden="true">sensors</span></span>
-              <div><h3>สถานีตรวจวัด</h3><p>{{ dashboardStations.length }} สถานีทั่วประเทศ</p></div>
+              <div><h3>สถานีตรวจวัด</h3><p>แสดง {{ dashboardStations.length }} จาก {{ dashboard?.totalAvailableStations || '—' }} สถานีที่ API ส่งมา</p></div>
             </div>
             <button v-if="errorDashboard" type="button" class="icon-action" aria-label="โหลดสถานีน้ำใหม่" @click="refreshDashboard()"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
           </div>
@@ -193,6 +193,7 @@
         v-if="selectedStation"
         :station-id="selectedStation.id"
         :station-name="selectedStation.name"
+        @forecast="selectedForecast = $event"
       />
       <div v-else class="glass-card module-skeleton chart-placeholder"><div class="skeleton-line wide"></div><div class="skeleton-chart-block"></div></div>
     </section>
@@ -202,7 +203,7 @@
         <div>
           <p class="section-kicker fire-text">จุดความร้อนและไฟป่า</p>
           <h2 id="fire-title">ติดตามจุดความร้อนและทิศทางลุกลาม</h2>
-          <p>ประมวลผลเฉพาะประเทศไทยในเส้นทางหลัก เพื่อลดภาระและตอบสนองได้เร็ว</p>
+          <p>จุดความร้อนจาก VIIRS SNPP ในประเทศไทย ไม่ใช่การยืนยันไฟภาคพื้นทุกจุด การลามเป็นแบบจำลองเชิงทดลอง</p>
         </div>
         <span class="module-status" :class="fireStatus"><span class="status-dot" aria-hidden="true"></span>{{ statusLongLabel(fireStatus) }}</span>
       </div>
@@ -256,7 +257,7 @@
         </article>
         <article class="forecast-summary-card rain">
           <span class="forecast-card-icon material-symbols-rounded" aria-hidden="true">rainy</span>
-          <div><span>ฝน · 6 ชั่วโมง</span><h3>{{ rainForecastHeadline }}</h3><p>{{ rainForecastDetail }}</p></div>
+          <div><span>ฝนสะสม 24 ชม. และลม</span><h3>{{ rainForecastHeadline }}</h3><p>{{ rainForecastDetail }}</p></div>
           <button type="button" @click="scrollToSection('map-section')">ดูบนแผนที่ <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
         </article>
       </div>
@@ -307,7 +308,11 @@ const fireSpreadPredictions = computed(() => fireDashboard.value?.spreadPredicti
 const aqiStationsList = computed(() => aqiData.value?.stations || [])
 
 const overallRisk = computed(() => dashboard.value?.overallRisk || 'safe')
-const selectedStation = computed(() => dashboardStations.value.find(station => station.id === selectedStationId.value) || null)
+const selectedForecast = ref(null)
+const selectedStation = computed(() => {
+  const station = dashboardStations.value.find(station => station.id === selectedStationId.value)
+  return station ? { ...station, ...(selectedForecast.value?.stationId === station.id ? selectedForecast.value : {}) } : null
+})
 const activeFireCount = computed(() => fireDashboard.value?.activeCount || 0)
 const waterAlertCount = computed(() => dashboardStations.value.filter(station => ['warning', 'danger'].includes(station.riskLevel)).length)
 
@@ -356,7 +361,7 @@ const lastUpdateLabel = computed(() => latestTimestamp.value ? `อัปเด�
 
 const visibleStations = computed(() => showAllStations.value ? dashboardStations.value : dashboardStations.value.slice(0, defaultStationLimit))
 const availableForecasts = computed(() => [
-  isUsableStatus(waterStatus.value) && selectedStation.value,
+  isUsableStatus(waterStatus.value) && selectedStation.value?.forecastPeak12 != null,
   isUsableStatus(fireStatus.value) && fireSpreadPredictions.value.length,
   isUsableStatus(aqiStatus.value) && aqiStationsList.value.some(station => station.forecast?.length),
   isUsableStatus(rainStatus.value) && rainStationsList.value.some(station => station.predictedPath?.length),
@@ -372,12 +377,10 @@ const sourceRows = computed(() => [
 const topFireForecast = computed(() => firesList.value.find(fire => fire.status === 'active') || firesList.value[0] || null)
 const topRainForecast = computed(() => rainStationsList.value[0] || null)
 
-const waterForecastHeadline = computed(() => selectedStation.value?.peakPredicted != null && Number.isFinite(Number(selectedStation.value.peakPredicted)) ? `${Number(selectedStation.value.peakPredicted).toFixed(2)} ม.` : selectedStation.value ? 'ยังคำนวณไม่ได้' : 'รอข้อมูลสถานี')
+const waterForecastHeadline = computed(() => selectedStation.value?.forecastPeak12 != null && Number.isFinite(Number(selectedStation.value.forecastPeak12)) ? `${Number(selectedStation.value.forecastPeak12).toFixed(2)} ม.` : selectedStation.value ? 'ยังคำนวณไม่ได้' : 'รอข้อมูลสถานี')
 const waterForecastDetail = computed(() => {
   if (!selectedStation.value) return waterStatus.value === 'error' ? 'เชื่อมต่อ ThaiWater ไม่ได้' : 'เลือกสถานีเพื่อดูแนวโน้ม 12 ชั่วโมง'
-  const score = selectedStation.value.forecastConfidence == null ? null : Number(selectedStation.value.forecastConfidence)
-  const scoreLabel = Number.isFinite(score) ? ` · คะแนนแบบจำลอง ${Math.round(score)}%` : ' · ยังไม่มีแนวโน้มก่อนหน้าเพียงพอ'
-  return `${selectedStation.value.name} · ${selectedStation.value.situationLabel || 'รอตรวจสอบ'}${scoreLabel}`
+  return `${selectedStation.value.name} · ${selectedStation.value.situationLabel || 'รอตรวจสอบ'} · แนวโน้มทดลอง ดูข้อจำกัดและผลทดสอบย้อนหลังใต้กราฟ`
 })
 const fireForecastHeadline = computed(() => topFireForecast.value?.peakEstimate ? `${topFireForecast.value.peakEstimate.areaSqKm} ตร.กม.` : 'ไม่พบจุดที่คำนวณได้')
 const fireForecastDetail = computed(() => topFireForecast.value?.peakEstimate ? `${topFireForecast.value.name} · ประมาณการใน ${topFireForecast.value.peakEstimate.timeHours} ชม. จากข้อมูล FIRMS และสภาพอากาศจริง` : fireStatus.value === 'error' ? 'เชื่อมต่อ NASA FIRMS ไม่ได้' : 'แบบจำลองจะเริ่มเมื่อมีจุดความร้อนและข้อมูลสภาพอากาศจริง')
@@ -389,7 +392,7 @@ const airForecastDetail = computed(() => {
   return aqiStatus.value === 'error' ? 'เชื่อมต่อสถานี AQICN ไม่ได้' : 'กำลังเชื่อมต่อแบบจำลองคุณภาพอากาศ'
 })
 const rainForecastHeadline = computed(() => topRainForecast.value ? `${topRainForecast.value.rainDirection || 'รอทิศทาง'} · ${topRainForecast.value.rain24h} มม.` : 'รอข้อมูลฝน')
-const rainForecastDetail = computed(() => topRainForecast.value ? `${topRainForecast.value.name} · แนวเคลื่อนตัว 1–6 ชั่วโมงจากข้อมูลลมจริง` : rainStatus.value === 'error' ? 'เชื่อมต่อข้อมูลฝนไม่ได้' : 'กำลังเชื่อมต่อสถานีวัดฝน')
+const rainForecastDetail = computed(() => topRainForecast.value ? `${topRainForecast.value.name} · ปริมาณที่ตรวจย้อนหลัง เส้นลมเป็นการสมมติ ไม่ใช่พยากรณ์ฝน` : rainStatus.value === 'error' ? 'เชื่อมต่อข้อมูลฝนไม่ได้' : 'กำลังเชื่อมต่อสถานีวัดฝน')
 
 watch(dashboardStations, (stations) => {
   if (stations.length && !stations.some(station => station.id === selectedStationId.value)) selectedStationId.value = stations[0].id
