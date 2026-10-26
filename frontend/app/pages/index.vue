@@ -367,7 +367,6 @@ const availableForecasts = computed(() => [
   isUsableStatus(waterStatus.value) && selectedStation.value?.forecastPeak12 != null,
   isUsableStatus(fireStatus.value) && fireSpreadPredictions.value.length,
   isUsableStatus(aqiStatus.value) && aqiStationsList.value.some(station => station.forecast?.length),
-  isUsableStatus(rainStatus.value) && rainStationsList.value.some(station => station.predictedPath?.length),
 ].filter(Boolean).length)
 
 const sourceRows = computed(() => [
