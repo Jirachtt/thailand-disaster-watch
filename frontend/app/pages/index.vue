@@ -102,6 +102,7 @@
           :fires="firesList"
           :world-fires="worldFiresList"
           :reports="communityReports"
+          :reports-available="reportsAvailable"
           :rain-stations="rainStationsList"
           :spread-predictions="fireSpreadPredictions"
           :aqi-stations="aqiStationsList"
@@ -110,7 +111,7 @@
           :focus-station="focusStation"
           @select-station="selectStation"
           @select-fire="selectFire"
-          @add-report="showReportForm = true"
+          @add-report="reportsAvailable && (showReportForm = true)"
         />
 
         <aside class="source-panel" aria-labelledby="source-panel-title">
@@ -136,6 +137,7 @@
             <span class="material-symbols-rounded" aria-hidden="true">info</span>
             <p>ระบบแสดงเฉพาะข้อมูลจาก API จริง หากเชื่อมต่อไม่ได้จะแสดงสถานะขัดข้องโดยไม่สร้างข้อมูลเหตุการณ์ทดแทน</p>
           </div>
+          <p class="source-note" role="status">{{ pendingReports ? 'กำลังตรวจสอบระบบแจ้งเหตุชุมชน' : reportsAvailable ? 'ระบบแจ้งเหตุชุมชนพร้อมใช้งาน รายงานยังต้องตรวจสอบก่อนยืนยัน' : 'ระบบแจ้งเหตุชุมชนยังไม่พร้อมใช้งาน จึงยังส่งรายงานผ่านเว็บไม่ได้ ข้อมูลจากสถานีตรวจวัดยังใช้งานได้' }}</p>
         </aside>
       </div>
     </section>
@@ -303,6 +305,7 @@ const dashboardStations = computed(() => dashboard.value?.stations || [])
 const firesList = computed(() => fireDashboard.value?.fires || [])
 const worldFiresList = computed(() => fireDashboard.value?.worldFires || [])
 const communityReports = computed(() => reportsData.value?.reports || [])
+const reportsAvailable = computed(() => !pendingReports.value && !errorReports.value && Array.isArray(reportsData.value?.reports))
 const rainStationsList = computed(() => rainData.value?.rainStations || [])
 const fireSpreadPredictions = computed(() => fireDashboard.value?.spreadPredictions || [])
 const aqiStationsList = computed(() => aqiData.value?.stations || [])
