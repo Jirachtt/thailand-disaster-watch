@@ -499,12 +499,13 @@
         <button
           type="button"
           class="map-control-btn report-btn"
+          :disabled="!reportsAvailable"
           @click="$emit('add-report')"
-          aria-label="แจ้งเหตุภัยพิบัติ"
-          title="แจ้งเหตุภัยพิบัติ"
+          :aria-label="reportsAvailable ? 'แจ้งเหตุภัยพิบัติ' : 'แจ้งเหตุยังไม่พร้อมใช้งาน'"
+          :title="reportsAvailable ? 'แจ้งเหตุภัยพิบัติ' : 'ระบบจัดเก็บรายงานยังไม่พร้อมใช้งาน'"
         >
           <span class="material-symbols-rounded">add_alert</span>
-          <span class="control-label">แจ้งเหตุ</span>
+          <span class="control-label">{{ reportsAvailable ? 'แจ้งเหตุ' : 'แจ้งเหตุยังไม่พร้อม' }}</span>
         </button>
         <button
           v-if="reports.length"
@@ -675,6 +676,7 @@ const props = defineProps({
   stations: { type: Array, default: () => [] },
   fires: { type: Array, default: () => [] },
   reports: { type: Array, default: () => [] },
+  reportsAvailable: { type: Boolean, default: false },
   rainStations: { type: Array, default: () => [] },
   spreadPredictions: { type: Array, default: () => [] },
   aqiStations: { type: Array, default: () => [] },
